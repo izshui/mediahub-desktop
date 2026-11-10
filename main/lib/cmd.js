@@ -107,18 +107,22 @@ function stream(args, onLine, opts = {}) {
     }
 
     let buffer = '';
+    let stdoutBuf = '';
+    let stderrBuf = '';
     const timer = setTimeout(() => {
       killTree(child);
-      resolve({ code: 124, stdout: '', stderr: '超时', timed_out: true });
+      resolve({ code: 124, stdout: stdoutBuf, stderr: stderrBuf + '\n[超时] 命令超过 ' + timeout + ' 秒被终止', timed_out: true });
     }, timeout * 1000);
 
-    const handle = (data, stream) => {
-      buffer += data.toString('utf8');
+    const handle = (data, streamName) => {
+      const text = data.toString('utf8');
+      if (streamName === 'stdout') stdoutBuf += text; else stderrBuf += text;
+      buffer += text;
       let idx;
       while ((idx = buffer.indexOf('\n')) !== -1) {
         const line = buffer.slice(0, idx).replace(/\r$/, '');
         buffer = buffer.slice(idx + 1);
-        onLine(line, stream);
+        onLine(line, streamName);
       }
     };
     child.stdout.on('data', (d) => handle(d, 'stdout'));
@@ -127,7 +131,7 @@ function stream(args, onLine, opts = {}) {
     child.on('close', (code) => {
       clearTimeout(timer);
       if (buffer.trim() !== '') onLine(buffer.replace(/\r$/, ''), 'stderr');
-      resolve({ code: code === null ? 1 : code, stdout: '', stderr: '', timed_out: false });
+      resolve({ code: code === null ? 1 : code, stdout: stdoutBuf, stderr: stderrBuf, timed_out: false });
     });
   });
 }

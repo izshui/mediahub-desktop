@@ -136,8 +136,8 @@ async function downloadVideo(store, ytdlp, videoId, storageDir, emit, opts = {})
   const cookies = row.cookies || (playlist && playlist.cookies) || '';
 
   const res = await ytdlp.download(row.source_url, outputDir, (pct, speed, eta, line) => {
-    if (emit) emit('download:progress', { videoId, percent: pct, speed, eta });
-  }, cookies, {});
+    if (emit) emit('download:progress', { videoId, title: row.title || '', percent: pct, speed, eta });
+  }, cookies, { concurrent_fragments: parseInt((opts && opts.concurrent_fragments) || 0, 10) });
 
   if (!res.ok) {
     store.updateVideo(videoId, { status: 'failed', error_message: res.error });
@@ -172,6 +172,8 @@ async function downloadVideo(store, ytdlp, videoId, storageDir, emit, opts = {})
     duration: res.meta.duration || row.duration || 0,
     downloaded_at: downloadedAt,
   });
+  // 下载记录立即落盘：即使随后退出应用也不会丢
+  if (typeof store.flush === 'function') store.flush();
 
   if (emit) emit('download:done', { videoId, ok: true, file: res.file });
   return { ok: true, file: res.file };

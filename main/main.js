@@ -27,11 +27,11 @@ const STORAGE_DIR = () => settings.storage_dir && settings.storage_dir.trim() !=
 function loadSettings() {
   try {
     if (fs.existsSync(SETTINGS_FILE())) {
-      settings = Object.assign({ storage_dir: '', yt_dlp: '', ffmpeg: '', ffprobe: '', theme: 'light' }, JSON.parse(fs.readFileSync(SETTINGS_FILE(), 'utf8')));
+      settings = Object.assign({ storage_dir: '', yt_dlp: '', ffmpeg: '', ffprobe: '', theme: 'light', proxy: '', max_concurrent_downloads: 3, concurrent_fragments: 4, auto_convert_format: 'mp3' }, JSON.parse(fs.readFileSync(SETTINGS_FILE(), 'utf8')));
       return;
     }
   } catch (e) {}
-  settings = { storage_dir: '', yt_dlp: '', ffmpeg: '', ffprobe: '', theme: 'light', proxy: '' };
+  settings = { storage_dir: '', yt_dlp: '', ffmpeg: '', ffprobe: '', theme: 'light', proxy: '', max_concurrent_downloads: 3, concurrent_fragments: 4, auto_convert_format: 'mp3' };
 }
 
 function saveSettings(patch) {
@@ -51,6 +51,46 @@ function refreshBinaries() {
 
 function emit(channel, payload) {
   if (win && !win.isDestroyed()) win.webContents.send('event', { channel, payload });
+}
+
+/** 并发池：最多 limit 路同时执行 worker(items[i])，单个失败不影响整体 */
+const { runPool } = require('./lib/pool');
+
+/**
+ * 下载单个视频。
+ * 若所属播放列表开启了「下载即转换」，下载完成后自动转成音频。
+ */
+async function downloadOne(videoId, force) {
+  const row = store.getVideo(videoId);
+  const playlist = row ? store.getPlaylist(row.playlist_id) : null;
+  emit('download:task:start', {
+    videoId,
+    title: row ? (row.title || row.current_name || '') : '',
+    playlistId: row ? row.playlist_id : null,
+  });
+
+  const r = await downloadVideo(store, ytDlp, videoId, STORAGE_DIR(), emit, {
+    force: !!force,
+    concurrent_fragments: parseInt(settings.concurrent_fragments || 4, 10),
+  });
+
+  let converted = false;
+  let convertError = '';
+  if (r.ok && playlist && playlist.auto_convert) {
+    const fmt = settings.auto_convert_format || 'mp3';
+    emit('convert:progress', { videoId, percent: 0, stage: 'auto' });
+    const c = await convertVideo(store, ffmpeg, videoId, { format: fmt }, STORAGE_DIR(), emit);
+    converted = !!c.ok;
+    if (!c.ok) convertError = c.error || '';
+  }
+
+  emit('download:task:done', {
+    videoId,
+    ok: !!r.ok,
+    error: r.error || convertError || '',
+    converted,
+  });
+  return Object.assign({}, r, { converted, convertError });
 }
 
 function createWindow() {
@@ -121,6 +161,9 @@ function registerIpc() {
   ipcMain.handle('playlist:create', async (_, { url, cookies }) => {
     return await extractPlaylist(store, ytDlp, url, cookies || '', emit);
   });
+  ipcMain.handle('playlist:setAutoConvert', (_, { playlistId, autoConvert }) => {
+    return store.updatePlaylist(playlistId, { auto_convert: !!autoConvert });
+  });
 
   ipcMain.handle('videos:list', (_, playlistId) => store.listVideos(playlistId));
   ipcMain.handle('video:get', (_, id) => store.getVideo(id));
@@ -128,7 +171,7 @@ function registerIpc() {
   ipcMain.handle('download:video', async (_, args) => {
     const a = args || {};
     const videoId = (a.videoId !== undefined) ? a.videoId : a;
-    return await downloadVideo(store, ytDlp, videoId, STORAGE_DIR(), emit, { force: !!a.force });
+    return await downloadOne(videoId, !!a.force);
   });
   ipcMain.handle('download:playlist', async (_, args) => {
     const a = args || {};
@@ -150,13 +193,23 @@ function registerIpc() {
       }
     }
 
-    let okCount = 0, failCount = 0;
-    for (const v of videos) {
-      const r = await downloadVideo(store, ytDlp, v.id, STORAGE_DIR(), emit, { force: !!a.force });
-      if (r.ok) okCount++; else failCount++;
-    }
-    emit('download:playlist:done', { playlistId, okCount, failCount });
-    return { ok: true, okCount, failCount };
+    const concurrency = Math.max(1, Math.min(8, parseInt(settings.max_concurrent_downloads || 3, 10)));
+    emit('download:batch:start', { playlistId, total: videos.length, concurrency });
+
+    // 并发下载：多路 yt-dlp 同时跑，吃满带宽与 CPU
+    let okCount = 0, failCount = 0, converted = 0;
+    await runPool(videos, concurrency, async (v) => {
+      const r = await downloadOne(v.id, !!a.force);
+      if (r.ok) {
+        okCount++;
+        if (r.converted) converted++;
+      } else {
+        failCount++;
+      }
+    });
+
+    emit('download:playlist:done', { playlistId, okCount, failCount, converted });
+    return { ok: true, okCount, failCount, converted, concurrency };
   });
 
   // ---------------- 下载记录 ----------------
@@ -248,3 +301,6 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
+
+// 退出前立即落盘，避免防抖窗口内的下载记录/改名历史丢失
+app.on('before-quit', () => { if (store) store.flush(); });

@@ -37,7 +37,7 @@
   <!-- 独立移除启动遮罩：无论后续主脚本是否报错，这行只要执行，遮罩就会消失 -->
   <script>var __b = document.getElementById('boot'); if (__b) __b.remove();</script>
   <header class="topbar">
-    <div class="brand">🎬 MediaHub</div>
+    <div class="brand">🎬 MediaHub<span class="maker">慧天科技出品</span></div>
     <nav class="tabs">
       <button class="tab active" data-tab="download">下载</button>
       <button class="tab" data-tab="library">媒体库</button>
@@ -66,6 +66,13 @@
       <div class="card">
         <h2>播放列表</h2>
         <div id="playlistList" class="list"></div>
+      </div>
+      <div class="card">
+        <div class="row between">
+          <h2>正在下载</h2>
+          <span id="dlSummary" class="msg"></span>
+        </div>
+        <div id="dlActive" class="list"></div>
       </div>
     </section>
 
@@ -187,13 +194,33 @@
         <p class="hint">自动下载 yt-dlp / ffmpeg 需要联网；若你的网络需代理（如 Clash），请在此填写，应用会通过代理下载。</p>
       </div>
       <div class="card">
+        <h2>下载与转码性能</h2>
+        <div class="row">
+          <label>同时下载数
+            <input type="number" id="maxConcurrent" min="1" max="8" step="1" />
+          </label>
+          <label>单视频分片并发
+            <input type="number" id="concurrentFragments" min="1" max="16" step="1" />
+          </label>
+          <label>下载即转换格式
+            <select id="autoConvertFormat">
+              <option value="mp3">mp3</option><option value="m4a">m4a</option>
+              <option value="aac">aac</option><option value="flac">flac</option>
+              <option value="opus">opus</option><option value="wav">wav</option>
+            </select>
+          </label>
+          <button id="btnSavePerf">保存</button>
+        </div>
+        <p class="hint">同时下载数：并行跑多个 yt-dlp，吃满带宽与 CPU（建议 3～5，过高可能被源站限流）。分片并发：单个视频的分片并行拉取。转码会自动使用多线程，若系统 ffmpeg 支持 VideoToolbox 还会调用 GPU 解码。</p>
+      </div>
+      <div class="card">
         <h2>简繁转换引擎</h2>
         <div id="charsetInfo" class="msg"></div>
       </div>
       <div class="card">
         <h2>关于</h2>
         <div id="appVersion" class="msg"></div>
-        <p class="hint">MediaHub 桌面版 · 本地媒体工具箱。文件始终留在本机，不上传任何服务器。</p>
+        <p class="hint">慧天科技出品。MediaHub 桌面版 · 本地媒体工具箱。文件始终留在本机，不上传任何服务器。</p>
       </div>
     </section>
   </main>
@@ -235,6 +262,10 @@ const state = {
   rules: [],
   schema: [],
   records: [],    // 下载记录
+  active: {},     // 正在下载/转换的任务（videoId -> 状态）
+  batchTotal: 0,
+  batchDone: 0,
+  batchConcurrency: 1,
 };
 
 // 二进制下载进度：installId -> { percent }
@@ -275,9 +306,37 @@ function escapeHtml(s) {
 // ---------------- 事件订阅 ----------------
 api.onEvent((data) => {
   const { channel, payload } = data;
-  if (channel === 'download:progress') {
-    const bar = document.querySelector(`#prog-${payload.videoId} > i`);
-    if (bar) { bar.style.width = Math.max(0, Math.min(100, payload.percent)) + '%'; }
+  if (channel === 'download:batch:start') {
+    state.batchTotal = payload.total || 0;
+    state.batchDone = 0;
+    state.batchConcurrency = payload.concurrency || 1;
+    renderActiveDownloads();
+  } else if (channel === 'download:task:start') {
+    state.active[payload.videoId] = { title: payload.title || '未命名', percent: 0, speed: '', eta: '', status: 'downloading' };
+    renderActiveDownloads();
+  } else if (channel === 'download:progress') {
+    const a = state.active[payload.videoId];
+    if (a) {
+      a.percent = payload.percent;
+      a.speed = payload.speed || '';
+      a.eta = payload.eta || '';
+      if (!a.title && payload.title) a.title = payload.title;
+    }
+    renderActiveDownloads();
+  } else if (channel === 'download:task:done') {
+    const a = state.active[payload.videoId] || { title: '未命名', percent: 0 };
+    a.status = payload.ok ? 'done' : 'failed';
+    a.error = payload.error || '';
+    a.percent = payload.ok ? 100 : (a.percent || 0);
+    a.speed = ''; a.eta = '';
+    if (payload.converted) a.title = (a.title || '') + '（已转音频）';
+    state.active[payload.videoId] = a;
+    state.batchDone = (state.batchDone || 0) + 1;
+    renderActiveDownloads();
+  } else if (channel === 'convert:progress') {
+    const a = state.active[payload.videoId];
+    if (a) { a.status = 'converting'; a.percent = payload.percent; }
+    renderActiveDownloads();
   } else if (channel === 'download:done') {
     toast(payload.ok ? '下载完成' : ('下载失败: ' + (payload.error || '')));
     refreshVideos(); refreshPlaylists();
@@ -323,6 +382,39 @@ $$('.tab').forEach((tab) => {
   });
 });
 
+// ---------------- 正在下载（进度条） ----------------
+function renderActiveDownloads() {
+  const box = $('#dlActive');
+  const list = Object.keys(state.active).map((k) => state.active[k]);
+  const total = state.batchTotal || 0;
+  const done = state.batchDone || 0;
+  $('#dlSummary').textContent = total
+    ? ('总体 ' + done + ' / ' + total + '　并发 ' + (state.batchConcurrency || 1) + ' 路')
+    : '';
+
+  if (list.length === 0) {
+    box.innerHTML = '<div class="msg">当前没有下载任务。</div>';
+    return;
+  }
+  box.innerHTML = list.map((x) => {
+    const pct = Math.max(0, Math.min(100, x.percent || 0));
+    let sub;
+    if (x.status === 'converting') sub = '正在转音频… ' + Math.round(pct) + '%';
+    else if (x.status === 'done') sub = '完成' + (x.convertedNote || '');
+    else if (x.status === 'failed') sub = '失败：' + (x.error || '未知错误');
+    else sub = (x.speed || '') + (x.eta ? '　ETA ' + x.eta : '');
+    return `
+      <div class="item">
+        <div class="grow">
+          <div class="title">${escapeHtml(x.title || '未命名')}</div>
+          <div class="sub">${escapeHtml(sub)}</div>
+          <div class="progress"><i style="width:${pct}%"></i></div>
+        </div>
+        <div class="pct">${Math.round(pct)}%</div>
+      </div>`;
+  }).join('');
+}
+
 // ---------------- 下载 ----------------
 $('#btnParse').addEventListener('click', async () => {
   const url = $('#urlInput').value.trim();
@@ -337,6 +429,18 @@ $('#btnParse').addEventListener('click', async () => {
         ? `「${r.playlist.title}」已存在，复用原记录；共 ${r.count} 条（新增 ${r.added} 条）`
         : `已解析「${r.playlist.title}」，共 ${r.count} 条`;
       refreshPlaylists(); refreshVideos();
+
+      // 解析后询问：是否在下载时同步转换为音频
+      const fmt = $('#autoConvertFormat').value || 'mp3';
+      const wantConvert = confirm(
+        '解析到 ' + r.count + ' 个视频。\n\n' +
+        '是否在下载时同步转换为音频（' + fmt.toUpperCase() + '）？\n\n' +
+        '确定 = 下载并转换\n取消 = 仅下载（之后可在「转音频」页手动处理）'
+      );
+      await api.call('playlist:setAutoConvert', { playlistId: r.playlist.id, autoConvert: wantConvert ? 1 : 0 });
+      $('#parseMsg').textContent += wantConvert
+        ? '｜已开启「下载即转换为 ' + fmt.toUpperCase() + '」'
+        : '｜仅下载';
     } else {
       $('#parseMsg').textContent = '解析失败: ' + (r.error || '');
     }
@@ -768,6 +872,15 @@ $('#btnSaveProxy').addEventListener('click', async () => {
   toast('代理已保存，下载依赖时将使用');
 });
 
+$('#btnSavePerf').addEventListener('click', async () => {
+  await api.call('settings:save', {
+    max_concurrent_downloads: Math.max(1, Math.min(8, parseInt($('#maxConcurrent').value, 10) || 3)),
+    concurrent_fragments: Math.max(1, Math.min(16, parseInt($('#concurrentFragments').value, 10) || 4)),
+    auto_convert_format: $('#autoConvertFormat').value,
+  });
+  toast('性能设置已保存');
+});
+
 async function loadCharsetInfo() {
   const r = await api.call('charset:info', null);
   $('#charsetInfo').textContent = `引擎：${r.engine}｜简→繁词条 ${r.s2t_single}｜繁→简词条 ${r.t2s_single}｜数据目录：${r.dataDir}`;
@@ -786,6 +899,9 @@ async function initStorage() {
   const s = await api.call('settings:get', null);
   $('#storageDir').value = s.storage_dir || '';
   $('#proxyInput').value = s.proxy || '';
+  $('#maxConcurrent').value = s.max_concurrent_downloads || 3;
+  $('#concurrentFragments').value = s.concurrent_fragments || 4;
+  $('#autoConvertFormat').value = s.auto_convert_format || 'mp3';
 }
 
 // ---------------- 启动 ----------------

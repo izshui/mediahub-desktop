@@ -83,6 +83,8 @@ class YtDlp {
     const maxHeight = parseInt(options.max_height || 0, 10);
     const writeInfo = options.write_info_json !== undefined ? options.write_info_json : true;
     const extra = (options.extra_args || '').trim();
+    // 分片并发：HLS/DASH 流可多路同时拉取，吃满带宽与 CPU
+    const fragments = parseInt(options.concurrent_fragments || 0,  10);
 
     const args = [
       this.binary, '--newline', '--no-color', '--no-warnings', '--no-playlist',
@@ -91,9 +93,14 @@ class YtDlp {
       '--output', path.join(outputDir, '%(title).150B [%(id)s].%(ext)s'),
       '--no-mtime',
     ];
+    // 让 yt-dlp 把最终产物路径写入独立文件：并发下载时不会被同目录的其他文件干扰
+    const uid = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    const pathFile = '.mh-path-' + uid + '.txt';
+    args.push('--print-to-file', 'after_move:filepath:' + pathFile);
     if (maxHeight > 0) { args.push('--format-sort', 'res:' + maxHeight); }
     if (writeInfo) { args.push('--write-info-json', '--no-clean-info-json'); }
     if (cookies && fs.existsSync(cookies)) { args.push('--cookies', cookies); }
+    if (fragments > 1) { args.push('--concurrent-fragments', String(fragments)); }
     if (extra) {
       for (const a of extra.split(/\s+/).filter(Boolean)) args.push(a);
     }
@@ -122,17 +129,47 @@ class YtDlp {
         errLines.push(line);
         if (onProgress) onProgress(lastPct < 0 ? 0 : lastPct, '', '', line);
       }
-    }, { timeout: parseInt(options.timeout || 7200, 10) });
+    }, { timeout: parseInt(options.timeout || 7200, 10), cwd: outputDir });
 
     if (r.code !== 0) {
+      this.cleanupPathFile(outputDir, pathFile);
       return { ok: false, file: null, error: this.extractError(errLines, r.stderr), meta: {} };
     }
 
-    const file = this.locateOutput(outputDir);
+    // 优先使用 yt-dlp 回传的精确路径；失败再退回按时间猜测
+    let file = this.readPrintedPath(outputDir, pathFile);
+    this.cleanupPathFile(outputDir, pathFile);
+    if (!file) file = this.locateOutput(outputDir);
+
     let meta = {};
-    const infoJson = this.locateInfoJson(outputDir);
+    const infoPath = file ? this.infoJsonFor(file) : null;
+    const infoJson = (infoPath && fs.existsSync(infoPath)) ? infoPath : this.locateInfoJson(outputDir);
     if (infoJson) meta = this.readMeta(infoJson);
     return { ok: true, file, error: null, meta };
+  }
+
+  /** 读取 yt-dlp 通过 --print-to-file 写下的最终产物路径 */
+  readPrintedPath(outputDir, pathFile) {
+    try {
+      const p = path.join(outputDir, pathFile);
+      if (!fs.existsSync(p)) return null;
+      const lines = fs.readFileSync(p, 'utf8').split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+      if (lines.length === 0) return null;
+      return lines[lines.length - 1];
+    } catch (e) {
+      return null;
+    }
+  }
+
+  cleanupPathFile(outputDir, pathFile) {
+    try { fs.unlinkSync(path.join(outputDir, pathFile)); } catch (e) {}
+  }
+
+  /** 由最终文件路径推导对应的 .info.json（并发时不会被同目录其他文件干扰） */
+  infoJsonFor(file) {
+    if (!file) return null;
+    const i = file.lastIndexOf('.');
+    return i > 0 ? file.slice(0, i) + '.info.json' : null;
   }
 
   async probe(url, cookies = '', timeout = 120) {

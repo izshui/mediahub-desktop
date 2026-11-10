@@ -14,6 +14,8 @@ class FFmpeg {
   constructor(ffmpeg = null, ffprobe = null) {
     this.ffmpeg = ffmpeg || 'ffmpeg';
     this.ffprobe = ffprobe || 'ffprobe';
+    this._hwaccels = null;   // 硬件解码能力缓存
+    this._hwaccelChecked = false;
   }
 
   available() { return which(this.ffmpeg) !== null; }
@@ -23,6 +25,39 @@ class FFmpeg {
     const r = await run([this.ffmpeg, '-version'], { timeout: 30 });
     const line = (r.stdout || '').split('\n')[0] || '';
     return line.trim();
+  }
+
+  /**
+   * 探测本机 ffmpeg 支持的硬件解码器（macOS 上通常是 videotoolbox，可调用 GPU 解码省 CPU）。
+   * 结果缓存，只探测一次。
+   */
+  async hwaccels() {
+    if (this._hwaccelChecked) return this._hwaccels;
+    this._hwaccelChecked = true;
+    this._hwaccels = [];
+    if (!this.available()) return this._hwaccels;
+    try {
+      const r = await run([this.ffmpeg, '-hide_banner', '-hwaccels'], { timeout: 20 });
+      if (r.code === 0) {
+        this._hwaccels = (r.stdout || '').split(/\r?\n/)
+          .map((s) => s.trim())
+          .filter((s) => s && s !== 'Hardware acceleration methods:');
+      }
+    } catch (e) { /* 探测失败则不启用 */ }
+    return this._hwaccels;
+  }
+
+  /** 选一个可用的硬件解码器（按平台优先级） */
+  async pickHwaccel() {
+    const list = await this.hwaccels();
+    if (list.length === 0) return null;
+    const prefer = process.platform === 'darwin'
+      ? ['videotoolbox', 'videotoolbox_vld']
+      : ['cuda', 'nvdec', 'vaapi', 'qsv', 'd3d11va'];
+    for (const p of prefer) {
+      if (list.includes(p)) return p;
+    }
+    return null;
   }
 
   async extractAudio(input, output, opts = {}, onProgress = null) {
@@ -55,8 +90,15 @@ class FFmpeg {
 
     const args = [
       this.ffmpeg, '-hide_banner', '-loglevel', 'error', '-progress', 'pipe:1',
-      '-nostats', '-y', '-i', this.absPath(input), '-vn',
+      '-nostats', '-y',
     ];
+    // 硬件解码：调用本机 GPU（macOS=VideoToolbox）解码视频，显著降低 CPU 占用
+    const hw = opts.hwaccel === false ? null : await this.pickHwaccel();
+    if (hw) args.push('-hwaccel', hw);
+    args.push('-i', this.absPath(input), '-vn');
+    // 多线程：用满 CPU 核心（0 = 自动）
+    const threads = opts.threads !== undefined ? parseInt(opts.threads, 10) : 0;
+    if (threads >= 0) args.push('-threads', String(threads));
     if (codec[1] !== null) { args.push('-b:a', codec[1]); }
     args.push('-ar', String(sr), '-ac', String(channels), '-c:a', codec[0]);
     args.push('-f', codec[2]);

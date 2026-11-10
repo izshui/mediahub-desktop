@@ -28,10 +28,20 @@ class Store {
   save() {
     if (this._saveTimer) clearTimeout(this._saveTimer);
     this._saveTimer = setTimeout(() => {
-      try {
-        fs.writeFileSync(this.file, JSON.stringify(this.data, null, 2));
-      } catch (e) { /* ignore */ }
+      this._saveTimer = null;
+      this.flush();
     }, 200);
+  }
+
+  /** 立即同步落盘（防抖窗口内退出应用会导致数据丢失，退出前必须调用） */
+  flush() {
+    if (this._saveTimer) { clearTimeout(this._saveTimer); this._saveTimer = null; }
+    try {
+      fs.writeFileSync(this.file, JSON.stringify(this.data, null, 2));
+      return true;
+    } catch (e) {
+      return false;
+    }
   }
 
   _nextId(arr) {
