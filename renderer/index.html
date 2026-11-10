@@ -1,0 +1,805 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <!-- 本地桌面程序：无远程内容，不使用 CSP，避免 file:// 下 'self' 匹配不到本地 app.js 导致脚本被拦截（用户文本已做 escape 防 XSS） -->
+  <title>MediaHub · 本地媒体工具箱</title>
+  <link rel="stylesheet" href="style.css" />
+  <!-- 早期错误捕获：任何脚本错误（含解析错误）都显示到页面，无需 DevTools 即可排查 -->
+  <script>
+    (function () {
+      function showFatal(title, detail) {
+        var pre = document.getElementById('fatal');
+        if (!pre) {
+          pre = document.createElement('pre');
+          pre.id = 'fatal';
+          pre.style.cssText = 'position:fixed;inset:0;background:#d64045;color:#fff;padding:16px;margin:0;font:12px/1.5 monospace;white-space:pre-wrap;z-index:999999;overflow:auto;';
+          (document.body || document.documentElement).appendChild(pre);
+        }
+        pre.textContent = title + '\n\n' + (detail || '');
+      }
+      window.__showFatal = showFatal;
+      window.addEventListener('error', function (e) {
+        showFatal('⚠ 脚本错误（行 ' + (e.lineno || '?') + '）:\n' + (e.message || ''), e.error && e.error.stack ? e.error.stack : '');
+      });
+      window.addEventListener('unhandledrejection', function (e) {
+        var r = e.reason;
+        showFatal('⚠ 未处理的 Promise 失败:\n' + ((r && (r.stack || r.message)) || r));
+      });
+    })();
+  </script>
+</head>
+<body>
+  <!-- 启动指示：app.js 成功加载后会立即移除本元素。若此文字一直显示，说明前端脚本未加载 -->
+  <div id="boot" style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#f5f6f8;color:#8a9099;font-size:15px;z-index:99999;">
+    正在加载界面…（若此文字长时间不消失，说明前端脚本未能加载，请查看 DevTools 控制台）
+  </div>
+  <!-- 独立移除启动遮罩：无论后续主脚本是否报错，这行只要执行，遮罩就会消失 -->
+  <script>var __b = document.getElementById('boot'); if (__b) __b.remove();</script>
+  <header class="topbar">
+    <div class="brand">🎬 MediaHub</div>
+    <nav class="tabs">
+      <button class="tab active" data-tab="download">下载</button>
+      <button class="tab" data-tab="library">媒体库</button>
+      <button class="tab" data-tab="records">下载记录</button>
+      <button class="tab" data-tab="rename">改名</button>
+      <button class="tab" data-tab="convert">转音频</button>
+      <button class="tab" data-tab="settings">设置</button>
+    </nav>
+    <div class="bin-status" id="binStatus"></div>
+  </header>
+
+  <main>
+    <!-- 下载 -->
+    <section class="panel active" id="tab-download">
+      <div class="card">
+        <h2>解析播放列表 / 单视频</h2>
+        <div class="row">
+          <input type="text" id="urlInput" placeholder="粘贴 YouTube / Facebook / Twitter 播放列表或视频链接" />
+        </div>
+        <div class="row">
+          <input type="text" id="cookieInput" placeholder="cookies.txt 路径（可选，用于私有/受限视频）" />
+          <button id="btnParse" class="primary">解析</button>
+        </div>
+        <div id="parseMsg" class="msg"></div>
+      </div>
+      <div class="card">
+        <h2>播放列表</h2>
+        <div id="playlistList" class="list"></div>
+      </div>
+    </section>
+
+    <!-- 媒体库 -->
+    <section class="panel" id="tab-library">
+      <div class="card">
+        <div class="row between">
+          <h2>媒体库</h2>
+          <select id="libFilter"><option value="">全部播放列表</option></select>
+        </div>
+        <div id="videoTable" class="table"></div>
+      </div>
+    </section>
+
+    <!-- 下载记录 -->
+    <section class="panel" id="tab-records">
+      <div class="card">
+        <div class="row between">
+          <h2>下载记录 <span id="recordsCount" class="msg"></span></h2>
+          <div>
+            <button id="btnRefreshRecords">刷新</button>
+            <button id="btnClearRecords">清空记录</button>
+          </div>
+        </div>
+        <p class="hint">记录永久保留，用于识别重复下载。点击「位置」可在访达中定位文件。</p>
+        <div id="recordsTable" class="table"></div>
+      </div>
+    </section>
+
+    <!-- 改名 -->
+    <section class="panel" id="tab-rename">
+      <div class="grid2">
+        <div class="card">
+          <h2>选择文件</h2>
+          <div class="row">
+            <button id="btnPickFolder">选择文件夹</button>
+            <button id="btnPickFiles">选择文件</button>
+            <button id="btnClearPick" class="ghost">清空</button>
+          </div>
+          <div id="renamePick" class="list scroll"></div>
+        </div>
+        <div class="card">
+          <h2>改名规则</h2>
+          <div id="ruleList" class="list"></div>
+          <details class="add-rule">
+            <summary>＋ 新增规则</summary>
+            <div class="row">
+              <select id="ruleType"></select>
+              <button id="btnAddRule">添加</button>
+            </div>
+            <div id="ruleFields"></div>
+          </details>
+        </div>
+      </div>
+      <div class="card">
+        <div class="row between">
+          <div>
+            <button id="btnPreview" class="primary">预览</button>
+            <button id="btnExecute">执行改名</button>
+          </div>
+          <span id="renameSummary" class="msg"></span>
+        </div>
+        <div id="previewTable" class="table"></div>
+      </div>
+    </section>
+
+    <!-- 转音频 -->
+    <section class="panel" id="tab-convert">
+      <div class="card">
+        <h2>视频转音频</h2>
+        <div class="row">
+          <label>格式
+            <select id="convFormat">
+              <option value="mp3">mp3</option>
+              <option value="m4a">m4a</option>
+              <option value="aac">aac</option>
+              <option value="flac">flac</option>
+              <option value="opus">opus</option>
+              <option value="wav">wav</option>
+              <option value="ogg">ogg</option>
+            </select>
+          </label>
+          <label>码率
+            <select id="convBitrate">
+              <option>64k</option><option>128k</option><option selected>192k</option>
+              <option>256k</option><option>320k</option>
+            </select>
+          </label>
+          <label><input type="checkbox" id="convNormalize" /> 音量标准化</label>
+        </div>
+        <div id="convertPick" class="list scroll"></div>
+        <button id="btnConvert" class="primary">开始转换</button>
+        <div id="convertLog" class="msg"></div>
+      </div>
+    </section>
+
+    <!-- 设置 -->
+    <section class="panel" id="tab-settings">
+      <div class="card">
+        <h2>二进制依赖</h2>
+        <div id="binBox" class="list"></div>
+        <p class="hint">缺少依赖时，点击"自动下载"即可（需联网，下载到本应用数据目录，不影响系统）。</p>
+      </div>
+      <div class="card">
+        <h2>存储位置</h2>
+        <div class="row">
+          <input type="text" id="storageDir" placeholder="下载/转码文件存放目录" />
+          <button id="btnPickStorage">选择文件夹</button>
+          <button id="btnSaveStorage">保存</button>
+        </div>
+        <p class="hint">媒体文件保存在本机，应用仅记录其路径用于管理，不会上传任何服务器。</p>
+      </div>
+      <div class="card">
+        <h2>网络代理（下载依赖用）</h2>
+        <div class="row">
+          <input type="text" id="proxyInput" placeholder="如 http://127.0.0.1:7890，留空则用系统环境变量" />
+          <button id="btnSaveProxy">保存</button>
+        </div>
+        <p class="hint">自动下载 yt-dlp / ffmpeg 需要联网；若你的网络需代理（如 Clash），请在此填写，应用会通过代理下载。</p>
+      </div>
+      <div class="card">
+        <h2>简繁转换引擎</h2>
+        <div id="charsetInfo" class="msg"></div>
+      </div>
+      <div class="card">
+        <h2>关于</h2>
+        <div id="appVersion" class="msg"></div>
+        <p class="hint">MediaHub 桌面版 · 本地媒体工具箱。文件始终留在本机，不上传任何服务器。</p>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast"></div>
+  <script>
+(function () {
+'use strict';
+/* MediaHub 桌面版前端逻辑（原生 JS，通过 window.api 调用主进程） */
+
+// 脚本已执行：立即移除启动遮罩（若遮罩一直显示，说明本文件未加载/被拦截）
+(function () { var b = document.getElementById('boot'); if (b) b.remove(); })();
+
+/* 全局错误可视化：任何未捕获错误 / 未处理的 Promise 失败都显示在页面顶部红条，免 DevTools 也能排查 */
+function showFatal(msg) {
+  let el = document.getElementById('fatal');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'fatal';
+    el.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:#d64045;color:#fff;padding:10px 16px;font:12px/1.5 monospace;white-space:pre-wrap;max-height:40vh;overflow:auto;';
+    document.body.appendChild(el);
+  }
+  el.textContent = '⚠ 运行错误：\n' + msg;
+}
+window.addEventListener('error', (e) => showFatal((e.error && e.error.stack) || e.message || String(e)));
+window.addEventListener('unhandledrejection', (e) => showFatal('Promise 失败：' + ((e.reason && (e.reason.stack || e.reason.message)) || e.reason)));
+
+/* 防御：若 preload 未注入 api，提供空实现，避免整页脚本崩溃导致标签无法切换 */
+const api = window.api || {
+  call: () => Promise.resolve({ ok: false, error: 'window.api 未注入（preload 未加载）' }),
+  onEvent: () => () => {},
+};
+const $ = (sel) => document.querySelector(sel);
+const $$ = (sel) => Array.from(document.querySelectorAll(sel));
+
+const state = {
+  playlists: [],
+  videos: [],     // 全部视频
+  rules: [],
+  schema: [],
+  records: [],    // 下载记录
+};
+
+// 二进制下载进度：installId -> { percent }
+const installState = {};
+const BIN_LABEL = { 'yt-dlp': 'yt-dlp', 'ffmpeg': 'ffmpeg/ffprobe', 'ffprobe': 'ffmpeg/ffprobe' };
+
+function toast(msg) {
+  const t = $('#toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(t._t);
+  // 长文本（多行报错）显示更久，避免一闪而过看不清
+  const dur = Math.min(12000, 2200 + String(msg).length * 60);
+  t._t = setTimeout(() => t.classList.remove('show'), dur);
+}
+
+function statusBadge(s) {
+  const map = {
+    pending: ['待下载', 'badge'], downloading: ['下载中', 'badge warn'],
+    downloaded: ['已下载', 'badge ok'], failed: ['失败', 'badge bad'],
+    converting: ['转码中', 'badge warn'], converted: ['已转音频', 'badge ok'],
+  };
+  const [text, cls] = map[s] || [s || '—', 'badge'];
+  return `<span class="${cls}">${text}</span>`;
+}
+
+function fmtBytes(n) {
+  if (!n) return '';
+  const u = ['B', 'KB', 'MB', 'GB']; let i = 0, x = n;
+  while (x >= 1024 && i < u.length - 1) { x /= 1024; i++; }
+  return (i === 0 ? x : x.toFixed(1)) + ' ' + u[i];
+}
+
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// ---------------- 事件订阅 ----------------
+api.onEvent((data) => {
+  const { channel, payload } = data;
+  if (channel === 'download:progress') {
+    const bar = document.querySelector(`#prog-${payload.videoId} > i`);
+    if (bar) { bar.style.width = Math.max(0, Math.min(100, payload.percent)) + '%'; }
+  } else if (channel === 'download:done') {
+    toast(payload.ok ? '下载完成' : ('下载失败: ' + (payload.error || '')));
+    refreshVideos(); refreshPlaylists();
+  } else if (channel === 'download:playlist:done') {
+    toast(`播放列表下载完成：成功 ${payload.okCount}，失败 ${payload.failCount}`);
+    refreshVideos(); refreshPlaylists();
+  } else if (channel === 'playlist:ready') {
+    refreshPlaylists(); refreshVideos();
+  } else if (channel === 'convert:progress') {
+    const bar = document.querySelector(`#convprog-${payload.videoId} > i`);
+    if (bar) bar.style.width = Math.max(0, Math.min(100, payload.percent)) + '%';
+  } else if (channel === 'convert:done') {
+    toast(payload.ok ? '转码完成' : ('转码失败: ' + (payload.error || '')));
+    refreshVideos();
+  } else if (channel === 'install:progress') {
+    installState[payload.name] = { percent: payload.percent };
+    renderBinBox();
+  } else if (channel === 'install:done') {
+    delete installState[payload.name];
+    toast((BIN_LABEL[payload.name] || payload.name) + ' 安装完成');
+    checkBinaries();
+  }
+});
+
+// ---------------- 标签切换 ----------------
+$$('.tab').forEach((tab) => {
+  tab.addEventListener('click', async () => {
+    $$('.tab').forEach((t) => t.classList.remove('active'));
+    $$('.panel').forEach((p) => p.classList.remove('active'));
+    tab.classList.add('active');
+    const panel = $('#tab-' + tab.dataset.tab);
+    if (panel) panel.classList.add('active');
+    try {
+      if (tab.dataset.tab === 'library') await refreshVideos();
+      if (tab.dataset.tab === 'records') await refreshRecords();
+      if (tab.dataset.tab === 'rename') { await refreshRules(); renderRenamePick(); }
+      if (tab.dataset.tab === 'convert') { await refreshVideos(); renderConvertPick(); }
+      if (tab.dataset.tab === 'settings') { await checkBinaries(); await loadCharsetInfo(); await loadAppVersion(); }
+    } catch (e) {
+      toast('加载失败：' + (e.message || e));
+      console.error(e);
+    }
+  });
+});
+
+// ---------------- 下载 ----------------
+$('#btnParse').addEventListener('click', async () => {
+  const url = $('#urlInput').value.trim();
+  const cookies = $('#cookieInput').value.trim();
+  if (!url) { toast('请输入链接'); return; }
+  $('#parseMsg').textContent = '解析中…';
+  $('#btnParse').disabled = true;
+  try {
+    const r = await api.call('playlist:create', { url, cookies });
+    if (r.ok) {
+      $('#parseMsg').textContent = r.reused
+        ? `「${r.playlist.title}」已存在，复用原记录；共 ${r.count} 条（新增 ${r.added} 条）`
+        : `已解析「${r.playlist.title}」，共 ${r.count} 条`;
+      refreshPlaylists(); refreshVideos();
+    } else {
+      $('#parseMsg').textContent = '解析失败: ' + (r.error || '');
+    }
+  } catch (e) {
+    $('#parseMsg').textContent = '错误: ' + e.message;
+  } finally {
+    $('#btnParse').disabled = false;
+  }
+});
+
+async function refreshPlaylists() {
+  state.playlists = await api.call('playlists:list', null);
+  renderPlaylists();
+}
+
+function renderPlaylists() {
+  const box = $('#playlistList');
+  if (state.playlists.length === 0) { box.innerHTML = '<div class="msg">还没有播放列表，粘贴链接开始。</div>'; return; }
+  box.innerHTML = '';
+  state.playlists.forEach((p) => {
+    const vids = state.videos.filter((v) => v.playlist_id === p.id);
+    const done = vids.filter(v => v.status === 'downloaded' || v.status === 'converted').length;
+    const div = document.createElement('div');
+    div.className = 'item';
+    div.innerHTML = `
+      <div class="grow">
+        <div class="title">${escapeHtml(p.title)}</div>
+        <div class="sub">${escapeHtml(p.platform)} · 共 ${p.item_count || vids.length} 条 · 已下载 ${done}${p.last_parsed_at ? ' · 解析于 ' + fmtTime(p.last_parsed_at) : ''}</div>
+        <div class="progress" id="plprog-${p.id}"><i style="width:0"></i></div>
+      </div>
+      <button data-dl="${p.id}">下载全部</button>
+      <button data-redl="${p.id}">重新下载</button>`;
+    box.appendChild(div);
+    div.querySelector('[data-dl]').addEventListener('click', (e) => doPlaylistDownload(p.id, false, e.target));
+    div.querySelector('[data-redl]').addEventListener('click', (e) => doPlaylistDownload(p.id, true, e.target));
+  });
+}
+
+// ---------------- 下载（含重复下载确认） ----------------
+function fmtTime(ts) {
+  if (!ts) return '—';
+  const d = new Date(Number(ts));
+  const p = (n) => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+}
+
+function duplicateText(list) {
+  const arr = list || [];
+  const items = arr.slice(0, 8).map(d => '· ' + (d.title || '') + '｜' + (d.reason || '')).join('\n');
+  return items + (arr.length > 8 ? '\n…等共 ' + arr.length + ' 项' : '');
+}
+
+async function doPlaylistDownload(playlistId, includeDone, btn) {
+  const label = includeDone ? '重新下载' : '下载全部';
+  const busy = (t) => { if (btn) { btn.disabled = (t !== null); btn.textContent = t === null ? label : t; } };
+  try {
+    busy('下载中…');
+    let r = await api.call('download:playlist', { playlistId, includeDone });
+    if (r && r.needConfirm) {
+      busy(null);
+      if (!confirm(r.error + '\n\n' + duplicateText(r.duplicates) + '\n\n确定要重新下载吗？')) return;
+      busy('下载中…');
+      r = await api.call('download:playlist', { playlistId, includeDone, force: true });
+    }
+    if (r && r.ok) toast('下载完成：成功 ' + r.okCount + '，失败 ' + r.failCount);
+    else if (r && r.error) toast(r.error);
+  } catch (e) {
+    toast('下载失败：' + (e && e.message ? e.message : e));
+  } finally {
+    busy(null);
+    refreshVideos(); refreshPlaylists(); refreshRecords();
+  }
+}
+
+async function doVideoDownload(videoId) {
+  try {
+    let r = await api.call('download:video', { videoId });
+    if (r && r.needConfirm) {
+      if (!confirm(r.error + '\n\n确定要重新下载吗？')) return;
+      r = await api.call('download:video', { videoId, force: true });
+    }
+    if (r && r.ok) toast('下载完成');
+    else if (r && r.error) toast(r.error);
+  } catch (e) {
+    toast('下载失败：' + (e && e.message ? e.message : e));
+  }
+  refreshVideos(); refreshPlaylists(); refreshRecords();
+}
+
+// ---------------- 媒体库 ----------------
+async function refreshVideos() {
+  state.videos = await api.call('videos:list', null);
+  renderLibrary();
+}
+
+function renderLibrary() {
+  const filter = $('#libFilter').value;
+  const rows = filter ? state.videos.filter((v) => v.playlist_id == filter) : state.videos;
+  const tbl = $('#videoTable');
+  if (rows.length === 0) { tbl.innerHTML = '<div class="msg">暂无文件。</div>'; return; }
+  tbl.innerHTML = `<table class="table"><thead><tr>
+    <th>标题</th><th>状态</th><th>文件名</th><th>大小</th><th>操作</th></tr></thead><tbody>
+    ${rows.map((v) => `<tr>
+      <td>${escapeHtml(v.title)}</td>
+      <td>${statusBadge(v.status)}</td>
+      <td>${escapeHtml(v.current_name || v.original_name || '')}</td>
+      <td>${fmtBytes(v.meta ? (JSON.parse(v.meta).filesize || 0) : 0)}</td>
+      <td>
+        <button data-vdl="${v.id}">下载</button>
+        <button data-open="${v.id}">打开</button>
+        <button data-show="${v.id}">位置</button>
+      </td></tr>`).join('')}
+    </tbody></table>`;
+  tbl.querySelectorAll('[data-vdl]').forEach((b) => b.addEventListener('click', () => doVideoDownload(b.dataset.vdl)));
+  tbl.querySelectorAll('[data-open]').forEach((b) => b.addEventListener('click', async () => {
+    const v = state.videos.find((x) => x.id == b.dataset.open);
+    if (v && v.filepath) api.call('open:folder', v.filepath);
+  }));
+  tbl.querySelectorAll('[data-show]').forEach((b) => b.addEventListener('click', async () => {
+    const v = state.videos.find((x) => x.id == b.dataset.show);
+    if (v && v.filepath) api.call('show:item', v.filepath);
+  }));
+}
+
+// ---------------- 下载记录 ----------------
+async function refreshRecords() {
+  try {
+    state.records = await api.call('downloads:list', null);
+  } catch (e) {
+    state.records = [];
+  }
+  renderRecords();
+}
+
+function renderRecords() {
+  const tbl = $('#recordsTable');
+  const rows = state.records || [];
+  $('#recordsCount').textContent = rows.length ? '（' + rows.length + ' 条）' : '';
+  if (rows.length === 0) { tbl.innerHTML = '<div class="msg">还没有下载记录。</div>'; return; }
+  tbl.innerHTML = `<table class="table"><thead><tr>
+    <th>下载时间</th><th>标题</th><th>平台</th><th>文件名</th><th>大小</th><th>操作</th></tr></thead><tbody>
+    ${rows.map((d) => `<tr>
+      <td>${fmtTime(d.downloaded_at)}</td>
+      <td>${escapeHtml(d.title)}</td>
+      <td>${escapeHtml(d.platform)}</td>
+      <td>${escapeHtml(d.filename)}</td>
+      <td>${fmtBytes(d.size)}</td>
+      <td>
+        <button data-show="${d.id}">位置</button>
+        <button data-del="${d.id}">删除记录</button>
+      </td></tr>`).join('')}
+    </tbody></table>`;
+  tbl.querySelectorAll('[data-show]').forEach((b) => b.addEventListener('click', () => {
+    const d = rows.find((x) => x.id == b.dataset.show);
+    if (d && d.filepath) api.call('show:item', d.filepath);
+  }));
+  tbl.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', async () => {
+    await api.call('downloads:remove', b.dataset.del);
+    refreshRecords();
+  }));
+}
+
+$('#btnRefreshRecords').addEventListener('click', refreshRecords);
+$('#btnClearRecords').addEventListener('click', async () => {
+  if (!confirm('确定清空全部下载记录？\n（仅清除记录，不会删除已下载的文件）')) return;
+  await api.call('downloads:clear', null);
+  refreshRecords();
+  toast('下载记录已清空');
+});
+
+async function initLibFilter() {
+  const sel = $('#libFilter');
+  state.playlists = await api.call('playlists:list', null);
+  sel.innerHTML = '<option value="">全部播放列表</option>' +
+    state.playlists.map((p) => `<option value="${p.id}">${escapeHtml(p.title)}</option>`).join('');
+  sel.addEventListener('change', renderLibrary);
+}
+
+// ---------------- 改名 ----------------
+async function refreshRules() {
+  const r = await api.call('rename:rules', null);
+  state.schema = r.schema;
+  state.rules = r.rules;
+  renderRules();
+  // 填充规则类型下拉
+  $('#ruleType').innerHTML = state.schema.map((s) => `<option value="${s.type}">${s.label}</option>`).join('');
+  renderRuleFields();
+}
+
+function renderRules() {
+  const box = $('#ruleList');
+  if (state.rules.length === 0) { box.innerHTML = '<div class="msg">暂无规则，点下方新增。</div>'; return; }
+  box.innerHTML = '';
+  state.rules.forEach((rule, idx) => {
+    const meta = state.schema.find((s) => s.type === rule.rule_type);
+    const div = document.createElement('div');
+    div.className = 'item';
+    div.innerHTML = `
+      <input type="checkbox" data-enable="${rule.id}" ${rule.enabled ? 'checked' : ''}/>
+      <div class="grow"><div class="title">${meta ? meta.label : rule.rule_type}</div>
+      <div class="sub">${escapeHtml(JSON.stringify(rule.params))}</div></div>
+      <button data-up="${rule.id}">↑</button>
+      <button data-down="${rule.id}">↓</button>
+      <button data-del="${rule.id}">删除</button>`;
+    box.appendChild(div);
+    div.querySelector('[data-enable]').addEventListener('change', async (e) => {
+      await api.call('rename:rule:save', Object.assign({}, rule, { enabled: e.target.checked }));
+      refreshRules();
+    });
+    div.querySelector('[data-del]').addEventListener('click', async () => {
+      await api.call('rename:rule:delete', rule.id); refreshRules();
+    });
+    div.querySelector('[data-up]').addEventListener('click', () => moveRule(idx, -1));
+    div.querySelector('[data-down]').addEventListener('click', () => moveRule(idx, 1));
+  });
+}
+
+function moveRule(idx, dir) {
+  const i = idx + dir;
+  if (i < 0 || i >= state.rules.length) return;
+  const a = state.rules[idx], b = state.rules[i];
+  const sa = a.sort_order, sb = b.sort_order;
+  a.sort_order = sb; b.sort_order = sa;
+  api.call('rename:rule:save', a); api.call('rename:rule:save', b);
+  setTimeout(refreshRules, 200);
+}
+
+function renderRuleFields() {
+  const type = $('#ruleType').value;
+  const meta = state.schema.find((s) => s.type === type);
+  const box = $('#ruleFields');
+  if (!meta) { box.innerHTML = ''; return; }
+  box.innerHTML = (meta.fields || []).map((f) => {
+    const id = 'rf_' + f.name;
+    if (f.type === 'select') {
+      return `<label>${f.label}<select id="${id}">${Object.entries(f.options).map(([k, v]) => `<option value="${k}" ${k===f.default?'selected':''}>${v}</option>`).join('')}</select></label>`;
+    }
+    if (f.type === 'bool') return `<label><input type="checkbox" id="${id}" ${f.default?'checked':''}/> ${f.label}</label>`;
+    if (f.type === 'textarea') return `<div class="row"><textarea id="${id}" placeholder="${f.label}">${f.default||''}</textarea></div>`;
+    if (f.type === 'number') return `<label>${f.label}<input type="number" id="${id}" value="${f.default||0}"/></label>`;
+    return `<label>${f.label}<input type="text" id="${id}" value="${f.default||''}" ${f.help?`title="${f.help}"`:''}/></label>`;
+  }).join('');
+}
+
+$('#ruleType').addEventListener('change', renderRuleFields);
+$('#btnAddRule').addEventListener('click', async () => {
+  const type = $('#ruleType').value;
+  const meta = state.schema.find((s) => s.type === type);
+  const params = {};
+  (meta.fields || []).forEach((f) => {
+    const node = document.getElementById('rf_' + f.name);
+    if (!node) return;
+    if (f.type === 'bool') params[f.name] = node.checked;
+    else if (f.type === 'number') params[f.name] = parseInt(node.value, 10) || 0;
+    else params[f.name] = node.value;
+  });
+  await api.call('rename:rule:save', { rule_type: type, params, enabled: true, sort_order: state.rules.length });
+  toast('规则已添加'); refreshRules();
+});
+
+let localFiles = []; // 用户选择的本地文件路径数组（改名用）
+
+function renderRenamePick() {
+  const box = $('#renamePick');
+  if (localFiles.length === 0) { box.innerHTML = '<div class="msg">请先点「选择文件夹」或「选择文件」，再应用改名规则。</div>'; return; }
+  box.innerHTML = '';
+  localFiles.forEach((p) => {
+    const div = document.createElement('div');
+    div.className = 'item';
+    div.innerHTML = `<label style="display:flex;gap:8px;align-items:center;width:100%">
+      <input type="checkbox" data-pick="${escapeHtml(p)}" checked/>
+      <span class="grow" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(p)}</span></label>`;
+    box.appendChild(div);
+  });
+}
+
+function selectedPaths() {
+  return $$('#renamePick [data-pick]:checked').map((c) => c.dataset.pick);
+}
+
+$('#btnPickFolder').addEventListener('click', async () => {
+  const dir = await api.call('dialog:selectFolder');
+  if (!dir) return;
+  const r = await api.call('fs:list', { dir });
+  localFiles = (r && r.files) ? r.files : [];
+  renderRenamePick();
+  toast(`已载入 ${localFiles.length} 个文件`);
+});
+$('#btnPickFiles').addEventListener('click', async () => {
+  const files = await api.call('dialog:selectFiles');
+  if (!files || files.length === 0) return;
+  const set = new Set(localFiles.concat(files));
+  localFiles = Array.from(set);
+  renderRenamePick();
+});
+$('#btnClearPick').addEventListener('click', () => { localFiles = []; renderRenamePick(); });
+
+$('#btnPreview').addEventListener('click', async () => {
+  const paths = selectedPaths();
+  if (paths.length === 0) { toast('请先选择文件'); return; }
+  const r = await api.call('rename:localPreview', { paths, ruleIds: null });
+  if (!r.ok) { $('#renameSummary').textContent = r.error || '预览失败'; return; }
+  $('#renameSummary').textContent = `共 ${r.count} 个文件，将应用规则 ${r.rule_ids.length} 条`;
+  const tbl = $('#previewTable');
+  tbl.innerHTML = `<table class="table"><thead><tr><th>原文件名</th><th>新文件名</th><th>变化</th></tr></thead><tbody>
+    ${r.items.map((it) => `<tr>
+      <td>${escapeHtml(it.original)}</td>
+      <td>${escapeHtml(it.new_filename)}</td>
+      <td class="${it.conflict ? 'conflict' : ''}">${it.conflict ? '⚠ 重名' : (it.new_filename === it.original ? '无变化' : '✓')}</td>
+    </tr>`).join('')}</tbody></table>`;
+});
+
+$('#btnExecute').addEventListener('click', async () => {
+  const paths = selectedPaths();
+  if (paths.length === 0) { toast('请先选择文件'); return; }
+  if (!confirm('确认对所选文件执行改名？此操作会真实修改磁盘文件名。')) return;
+  const r = await api.call('rename:localExecute', { paths, ruleIds: null });
+  toast(`改名完成：成功 ${r.renamed}，跳过 ${r.skipped}，失败 ${r.failed}`);
+  renderRenamePick();
+  $('#previewTable').innerHTML = '';
+});
+
+// ---------------- 转音频 ----------------
+function renderConvertPick() {
+  const box = $('#convertPick');
+  const vids = state.videos.filter((v) => v.filepath && (v.status === 'downloaded'));
+  if (vids.length === 0) { box.innerHTML = '<div class="msg">没有已下载的视频可转换。</div>'; return; }
+  box.innerHTML = '';
+  vids.forEach((v) => {
+    const div = document.createElement('div');
+    div.className = 'item';
+    div.innerHTML = `<input type="checkbox" data-conv="${v.id}"/>
+      <div class="grow"><div class="title">${escapeHtml(v.title)}</div>
+      <div class="sub">${escapeHtml(v.current_name || v.original_name || '')}</div></div>
+      <div class="progress" id="convprog-${v.id}" style="display:none"><i></i></div>`;
+    box.appendChild(div);
+  });
+}
+
+$('#btnConvert').addEventListener('click', async () => {
+  const ids = $$('#convertPick [data-conv]:checked').map((c) => parseInt(c.dataset.conv, 10));
+  if (ids.length === 0) { toast('请先选择视频'); return; }
+  const opts = { format: $('#convFormat').value, bitrate: $('#convBitrate').value, normalize: $('#convNormalize').checked };
+  $('#convertLog').textContent = `开始转换 ${ids.length} 个文件…`;
+  for (const id of ids) {
+    const bar = document.querySelector(`#convprog-${id}`);
+    if (bar) bar.style.display = 'block';
+    const r = await api.call('convert:video', { videoId: id, opts });
+    if (!r.ok) $('#convertLog').textContent += `\n#${id} 失败: ${r.error || ''}`;
+  }
+  $('#convertLog').textContent += '\n全部完成';
+  refreshVideos();
+});
+
+// ---------------- 设置 ----------------
+async function checkBinaries() {
+  const r = await api.call('binaries:check', null);
+  const ok = (b) => b ? '<span class="badge ok">已就绪</span>' : '<span class="badge bad">缺失</span>';
+  $('#binStatus').innerHTML =
+    `<span class="dot ${r.ytDlp?'ok':'bad'}"></span>yt-dlp
+     <span class="dot ${r.ffmpeg?'ok':'bad'}"></span>ffmpeg
+     <span class="dot ${r.ffprobe?'ok':'bad'}"></span>ffprobe`;
+  renderBinBox(r);
+}
+
+function renderBinBox(r) {
+  r = r || window._binStatus;
+  if (!r) return;
+  window._binStatus = r;
+  // key: 状态字段（判断是否已安装）；id: 安装标识（传给主进程）
+  const mk = (key, id, label, path) => {
+    const st = installState[id];
+    const busy = !!st;
+    let btn = '';
+    if (!r[key]) {
+      btn = busy
+        ? `<button data-install="${id}" disabled>下载中 ${st.percent}%</button>`
+        : `<button data-install="${id}">自动下载</button>`;
+    }
+    return `
+    <div class="item">
+      <div class="grow"><div class="title">${label}</div>
+      <div class="sub">${path ? escapeHtml(path) : '未安装'}</div>
+      ${btn}</div>
+      ${r[key] ? '<span class="badge ok">✓</span>' : '<span class="badge bad">缺失</span>'}
+    </div>`;
+  };
+  $('#binBox').innerHTML =
+    mk('ytDlp', 'yt-dlp', 'yt-dlp（下载）', r.paths && r.paths.ytDlp) +
+    mk('ffmpeg', 'ffmpeg', 'ffmpeg（转码）', r.paths && r.paths.ffmpeg) +
+    mk('ffprobe', 'ffprobe', 'ffprobe（探测）', r.paths && r.paths.ffprobe);
+  $('#binBox').querySelectorAll('[data-install]').forEach((b) => b.addEventListener('click', async () => {
+    const id = b.dataset.install;
+    installState[id] = { percent: 0 };
+    renderBinBox();
+    let res = null;
+    try {
+      res = await api.call('binaries:install', id);
+    } catch (e) {
+      res = { ok: false, error: e && e.message ? e.message : String(e) };
+    }
+    delete installState[id];
+    renderBinBox();
+    if (!res || !res.ok) {
+      toast('安装失败：' + ((res && res.error) || '未知错误'));
+    } else {
+      if (res.warning) toast('安装完成，但有组件未成功：\n' + res.warning);
+      else toast((BIN_LABEL[id] || id) + ' 安装完成');
+      await checkBinaries();
+    }
+  }));
+}
+
+$('#btnSaveStorage').addEventListener('click', async () => {
+  const dir = $('#storageDir').value.trim();
+  await api.call('settings:save', { storage_dir: dir });
+  toast('已保存');
+});
+$('#btnPickStorage').addEventListener('click', async () => {
+  const dir = await api.call('dialog:selectFolder');
+  if (!dir) return;
+  $('#storageDir').value = dir;
+  await api.call('settings:save', { storage_dir: dir });
+  toast('已保存');
+});
+$('#btnSaveProxy').addEventListener('click', async () => {
+  const proxy = $('#proxyInput').value.trim();
+  await api.call('settings:save', { proxy });
+  toast('代理已保存，下载依赖时将使用');
+});
+
+async function loadCharsetInfo() {
+  const r = await api.call('charset:info', null);
+  $('#charsetInfo').textContent = `引擎：${r.engine}｜简→繁词条 ${r.s2t_single}｜繁→简词条 ${r.t2s_single}｜数据目录：${r.dataDir}`;
+}
+
+async function loadAppVersion() {
+  try {
+    const v = await api.call('app:version', null);
+    $('#appVersion').textContent = `${v.name} v${v.version}`;
+  } catch (e) {
+    $('#appVersion').textContent = 'MediaHub';
+  }
+}
+
+async function initStorage() {
+  const s = await api.call('settings:get', null);
+  $('#storageDir').value = s.storage_dir || '';
+  $('#proxyInput').value = s.proxy || '';
+}
+
+// ---------------- 启动 ----------------
+(async function start() {
+  await initLibFilter();
+  await refreshPlaylists();
+  await refreshVideos();
+  await refreshRecords();
+  await refreshRules();
+  await checkBinaries();
+  await initStorage();
+  await loadAppVersion();
+})();
+})();
+  </script>
+</body>
+</html>

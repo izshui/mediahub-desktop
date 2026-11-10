@@ -1,0 +1,82 @@
+{
+  "name": "mediahub-desktop",
+  "version": "1.1.0",
+  "description": "本地媒体工具箱：批量下载 YouTube/Facebook/Twitter 播放列表视频，批量改名（简繁转换/智能生成/13种规则），视频转音频。Mac/Windows 安装即用。",
+  "main": "main/main.js",
+  "author": "箫阿七",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder",
+    "icon": "node tools/make-icon.js",
+    "dist:mac": "bash tools/build-mac.sh",
+    "dist:mac:dir": "electron-builder --mac --x64 --dir --publish never --config.electronDist=node_modules/electron/dist",
+    "dist:win": "electron-builder --win --x64 --publish never"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.mediahub.desktop",
+    "productName": "MediaHub",
+    "copyright": "Copyright © 2026 箫阿七",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "files": [
+      "main/**/*",
+      "renderer/**/*",
+      "charset-data/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "charset-data",
+        "to": "charset-data"
+      }
+    ],
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "category": "public.app-category.utilities",
+      "icon": "build/icon.icns",
+      "identity": null,
+      "darkModeSupport": true,
+      "gatekeeperAssess": false,
+      "extendInfo": {
+        "NSHumanReadableCopyright": "Copyright © 2026 箫阿七"
+      }
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "MediaHub"
+    }
+  }
+}
