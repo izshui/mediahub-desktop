@@ -13,6 +13,7 @@ const { preview, execute, revert, resolveRules, previewLocal, executeLocal } = r
 const { removeFile, removeDir, countFiles } = require('./lib/fileCleaner');
 const { removePlaylist, removeVideos } = require('./lib/deleteService');
 const { ensureAudioTrack, cleanDownloadLeftovers } = require('./lib/mediaFix');
+const { migrateDataDir } = require('./lib/dataDir');
 const { RenameEngine } = require('./lib/renameEngine');
 
 let win = null;
@@ -26,6 +27,31 @@ const DATA_DIR = () => path.join(app.getPath('userData'));
 const STORAGE_DIR = () => settings.storage_dir && settings.storage_dir.trim() !== ''
   ? settings.storage_dir
   : path.join(app.getPath('userData'), 'media');
+
+// ---------------------------------------------------------------------------
+// 统一数据目录
+//
+// 开发模式（electron .）的 userData 目录名取自 package.json 的 name，
+// 打包后取自 productName —— 两者不同会导致「切换开发版/安装版后历史记录消失」。
+// 这里显式固定目录名，使两种运行方式共用同一份数据。
+// ---------------------------------------------------------------------------
+const DATA_DIR_NAME = 'mediahub-desktop';
+const LEGACY_DIR_NAMES = ['MediaHub'];
+
+function unifyUserDataDir() {
+  try {
+    const base = app.getPath('appData');
+    app.setPath('userData', path.join(base, DATA_DIR_NAME));
+  } catch (e) { /* 保持默认 */ }
+}
+
+/** 目标目录没有数据、但旧目录有时，把旧数据迁移过来 */
+function migrateLegacyData() {
+  try {
+    return migrateDataDir(DATA_DIR(), app.getPath('appData'), LEGACY_DIR_NAMES);
+  } catch (e) { /* 迁移失败不阻断启动 */ }
+  return { migrated: false, from: '' };
+}
 
 function loadSettings() {
   try {
@@ -59,6 +85,21 @@ function emit(channel, payload) {
 /** 并发池：最多 limit 路同时执行 worker(items[i])，单个失败不影响整体 */
 const { runPool } = require('./lib/pool');
 
+/** 正在进行的下载任务 → 暂停/继续控制句柄 */
+const downloadControls = new Map();
+
+/** 暂停 / 继续某个下载任务 */
+function setPaused(videoId, paused) {
+  const c = downloadControls.get(videoId);
+  if (!c) return { ok: false, error: '任务不存在或已结束' };
+  const fn = paused ? c.pause : c.resume;
+  if (typeof fn !== 'function') return { ok: false, error: '该任务不支持暂停（可能尚未启动）' };
+  const done = fn();
+  if (!done) return { ok: false, error: (paused ? '暂停' : '继续') + '失败' };
+  emit('download:paused', { videoId, paused: !!paused });
+  return { ok: true, paused: !!paused };
+}
+
 /**
  * 下载单个视频。
  * 若所属播放列表开启了「下载即转换」，下载完成后自动转成音频。
@@ -72,11 +113,21 @@ async function downloadOne(videoId, force) {
     playlistId: row ? row.playlist_id : null,
   });
 
-  const r = await downloadVideo(store, ytDlp, videoId, STORAGE_DIR(), emit, {
-    force: !!force,
-    concurrent_fragments: parseInt(settings.concurrent_fragments || 4, 10),
-    ffmpeg_path: settings.ffmpeg || '',
-  });
+  // 暂停/继续控制句柄：与任务一一对应，供 IPC 调用
+  const control = { paused: false, pause: null, resume: null, stop: null, pid: null };
+  downloadControls.set(videoId, control);
+
+  let r;
+  try {
+    r = await downloadVideo(store, ytDlp, videoId, STORAGE_DIR(), emit, {
+      force: !!force,
+      concurrent_fragments: parseInt(settings.concurrent_fragments || 4, 10),
+      ffmpeg_path: settings.ffmpeg || '',
+      control,
+    });
+  } finally {
+    downloadControls.delete(videoId);
+  }
 
   // 下载产物完整性检查：若音视频未分离（缺 ffmpeg 导致），自动合并修复
   let fixNote = '';
@@ -250,6 +301,24 @@ function registerIpc() {
     return { ok: true, okCount, failCount, converted, concurrency };
   });
 
+  // ---------------- 暂停 / 继续 ----------------
+  ipcMain.handle('download:pause', (_, videoId) => setPaused(videoId, true));
+  ipcMain.handle('download:resume', (_, videoId) => setPaused(videoId, false));
+  ipcMain.handle('download:pauseAll', () => {
+    let n = 0;
+    for (const id of Array.from(downloadControls.keys())) {
+      if (setPaused(id, true).ok) n++;
+    }
+    return { ok: true, count: n };
+  });
+  ipcMain.handle('download:resumeAll', () => {
+    let n = 0;
+    for (const id of Array.from(downloadControls.keys())) {
+      if (setPaused(id, false).ok) n++;
+    }
+    return { ok: true, count: n };
+  });
+
   // ---------------- 下载记录 ----------------
   ipcMain.handle('downloads:list', () => store.listDownloads());
   ipcMain.handle('downloads:remove', (_, id) => store.deleteDownload(id));
@@ -305,11 +374,18 @@ function registerIpc() {
 }
 
 // ---------------- lifecycle ----------------
+// 必须在 app ready 之前固定 userData 目录，否则开发版与安装版会各用各的目录
+unifyUserDataDir();
+
 function bootstrap() {
+  const mig = migrateLegacyData();
   loadSettings();
   fs.mkdirSync(STORAGE_DIR(), { recursive: true });
   fs.mkdirSync(path.join(DATA_DIR(), 'bin'), { recursive: true });
   store = new Store(DATA_DIR());
+  if (mig.migrated) {
+    console.log('[MediaHub] 已从旧数据目录迁移：' + mig.from);
+  }
   refreshBinaries();
   CharsetSetDataDir(
     app.isPackaged

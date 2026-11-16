@@ -70,7 +70,11 @@
       <div class="card">
         <div class="row between">
           <h2>正在下载</h2>
-          <span id="dlSummary" class="msg"></span>
+          <div class="row">
+            <span id="dlSummary" class="msg"></span>
+            <button id="btnPauseAll">全部暂停</button>
+            <button id="btnResumeAll">全部继续</button>
+          </div>
         </div>
         <div id="dlActive" class="list"></div>
       </div>
@@ -316,7 +320,11 @@ api.onEvent((data) => {
     state.batchConcurrency = payload.concurrency || 1;
     renderActiveDownloads();
   } else if (channel === 'download:task:start') {
-    state.active[payload.videoId] = { title: payload.title || '未命名', percent: 0, speed: '', eta: '', status: 'downloading' };
+    state.active[payload.videoId] = { videoId: payload.videoId, title: payload.title || '未命名', percent: 0, speed: '', eta: '', status: 'downloading', paused: false };
+    renderActiveDownloads();
+  } else if (channel === 'download:paused') {
+    const a = state.active[payload.videoId];
+    if (a) a.paused = !!payload.paused;
     renderActiveDownloads();
   } else if (channel === 'download:progress') {
     const a = state.active[payload.videoId];
@@ -393,8 +401,9 @@ function renderActiveDownloads() {
   const list = Object.keys(state.active).map((k) => state.active[k]);
   const total = state.batchTotal || 0;
   const done = state.batchDone || 0;
+  const pausedCount = list.filter((x) => x.paused).length;
   $('#dlSummary').textContent = total
-    ? ('总体 ' + done + ' / ' + total + '　并发 ' + (state.batchConcurrency || 1) + ' 路')
+    ? ('总体 ' + done + ' / ' + total + '　并发 ' + (state.batchConcurrency || 1) + ' 路' + (pausedCount ? '　已暂停 ' + pausedCount : ''))
     : '';
 
   if (list.length === 0) {
@@ -404,10 +413,12 @@ function renderActiveDownloads() {
   box.innerHTML = list.map((x) => {
     const pct = Math.max(0, Math.min(100, x.percent || 0));
     let sub;
-    if (x.status === 'converting') sub = '正在转音频… ' + Math.round(pct) + '%';
+    if (x.paused) sub = '已暂停 ' + Math.round(pct) + '%';
+    else if (x.status === 'converting') sub = '正在转音频… ' + Math.round(pct) + '%';
     else if (x.status === 'done') sub = '完成' + (x.note || '') + (x.convertedNote || '');
     else if (x.status === 'failed') sub = '失败：' + (x.error || '未知错误');
     else sub = (x.speed || '') + (x.eta ? '　ETA ' + x.eta : '') + (x.note || '');
+    const canPause = (x.status === 'downloading' || x.status === 'converting');
     return `
       <div class="item">
         <div class="grow">
@@ -416,9 +427,30 @@ function renderActiveDownloads() {
           <div class="progress"><i style="width:${pct}%"></i></div>
         </div>
         <div class="pct">${Math.round(pct)}%</div>
+        ${canPause ? '<button data-pause="' + x.videoId + '">' + (x.paused ? '继续' : '暂停') + '</button>' : ''}
       </div>`;
   }).join('');
+
+  box.querySelectorAll('[data-pause]').forEach((b) => b.addEventListener('click', async () => {
+    const id = b.dataset.pause;
+    b.disabled = true;
+    const isPaused = !!(state.active[id] && state.active[id].paused);
+    const r = isPaused
+      ? await api.call('download:resume', id)
+      : await api.call('download:pause', id);
+    if (!r || !r.ok) toast((r && r.error) || '操作失败');
+    b.disabled = false;
+  }));
 }
+
+$('#btnPauseAll').addEventListener('click', async () => {
+  const r = await api.call('download:pauseAll', null);
+  toast(r && r.ok ? ('已暂停 ' + r.count + ' 个任务') : '没有可暂停的任务');
+});
+$('#btnResumeAll').addEventListener('click', async () => {
+  const r = await api.call('download:resumeAll', null);
+  toast(r && r.ok ? ('已继续 ' + r.count + ' 个任务') : '没有可继续的任务');
+});
 
 // ---------------- 下载 ----------------
 $('#btnParse').addEventListener('click', async () => {

@@ -109,10 +109,64 @@ function stream(args, onLine, opts = {}) {
     let buffer = '';
     let stdoutBuf = '';
     let stderrBuf = '';
-    const timer = setTimeout(() => {
-      killTree(child);
-      resolve({ code: 124, stdout: stdoutBuf, stderr: stderrBuf + '\n[超时] 命令超过 ' + timeout + ' 秒被终止', timed_out: true });
-    }, timeout * 1000);
+    let timer = null;
+    let settled = false;
+    let paused = false;
+
+    const finish = (r) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      resolve(r);
+    };
+    const armTimer = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        killTree(child);
+        finish({ code: 124, stdout: stdoutBuf, stderr: stderrBuf + '\n[超时] 命令超过 ' + timeout + ' 秒被终止', timed_out: true });
+      }, timeout * 1000);
+    };
+    armTimer();
+
+    // ---- 暂停 / 继续控制 ----
+    // Unix/macOS：用进程组信号冻结整个进程组（含 yt-dlp 拉起的 ffmpeg 子进程）；
+    // Windows：向 stdin 写入 yt-dlp 的交互指令（P 暂停 / R 继续）。
+    if (opts.control) {
+      const c = opts.control;
+      c.pid = child.pid;
+      c.paused = false;
+      c.pause = () => {
+        if (paused || settled) return false;
+        try {
+          if (process.platform === 'win32') {
+            if (!child.stdin || !child.stdin.writable) return false;
+            child.stdin.write('P');
+          } else {
+            process.kill(-child.pid, 'SIGSTOP');
+            if (timer) { clearTimeout(timer); timer = null; }
+          }
+          paused = true;
+          c.paused = true;
+          return true;
+        } catch (e) { return false; }
+      };
+      c.resume = () => {
+        if (!paused || settled) return false;
+        try {
+          if (process.platform === 'win32') {
+            if (!child.stdin || !child.stdin.writable) return false;
+            child.stdin.write('R');
+          } else {
+            process.kill(-child.pid, 'SIGCONT');
+            armTimer();
+          }
+          paused = false;
+          c.paused = false;
+          return true;
+        } catch (e) { return false; }
+      };
+      c.stop = () => { try { killTree(child); } catch (e) {} };
+    }
 
     const handle = (data, streamName) => {
       const text = data.toString('utf8');
@@ -129,9 +183,8 @@ function stream(args, onLine, opts = {}) {
     child.stderr.on('data', (d) => handle(d, 'stderr'));
     child.on('error', (e) => onLine(String(e.message), 'stderr'));
     child.on('close', (code) => {
-      clearTimeout(timer);
       if (buffer.trim() !== '') onLine(buffer.replace(/\r$/, ''), 'stderr');
-      resolve({ code: code === null ? 1 : code, stdout: stdoutBuf, stderr: stderrBuf, timed_out: false });
+      finish({ code: code === null ? 1 : code, stdout: stdoutBuf, stderr: stderrBuf, timed_out: false });
     });
   });
 }

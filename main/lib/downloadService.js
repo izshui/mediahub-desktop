@@ -140,6 +140,7 @@ async function downloadVideo(store, ytdlp, videoId, storageDir, emit, opts = {})
   }, cookies, {
     concurrent_fragments: parseInt((opts && opts.concurrent_fragments) || 0, 10),
     ffmpeg_path: (opts && opts.ffmpeg_path) || '',
+    control: (opts && opts.control) || null,
   });
 
   if (!res.ok) {

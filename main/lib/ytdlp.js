@@ -134,7 +134,7 @@ class YtDlp {
         errLines.push(line);
         if (onProgress) onProgress(lastPct < 0 ? 0 : lastPct, '', '', line);
       }
-    }, { timeout: parseInt(options.timeout || 7200, 10), cwd: outputDir });
+    }, { timeout: parseInt(options.timeout || 7200, 10), cwd: outputDir, control: options.control || null });
 
     if (r.code !== 0) {
       this.cleanupPathFile(outputDir, pathFile);
