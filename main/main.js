@@ -12,6 +12,7 @@ const { convertVideo } = require('./lib/convertService');
 const { preview, execute, revert, resolveRules, previewLocal, executeLocal } = require('./lib/renameService');
 const { removeFile, removeDir, countFiles } = require('./lib/fileCleaner');
 const { removePlaylist, removeVideos } = require('./lib/deleteService');
+const { ensureAudioTrack, cleanDownloadLeftovers } = require('./lib/mediaFix');
 const { RenameEngine } = require('./lib/renameEngine');
 
 let win = null;
@@ -74,7 +75,32 @@ async function downloadOne(videoId, force) {
   const r = await downloadVideo(store, ytDlp, videoId, STORAGE_DIR(), emit, {
     force: !!force,
     concurrent_fragments: parseInt(settings.concurrent_fragments || 4, 10),
+    ffmpeg_path: settings.ffmpeg || '',
   });
+
+  // 下载产物完整性检查：若音视频未分离（缺 ffmpeg 导致），自动合并修复
+  let fixNote = '';
+  if (r.ok && r.file) {
+    try {
+      const dir = path.dirname(r.file);
+      cleanDownloadLeftovers(dir);
+      const fixed = await ensureAudioTrack(ffmpeg, r.file);
+      if (fixed.changed && fixed.file) {
+        const base = path.basename(fixed.file);
+        store.updateVideo(videoId, {
+          filepath: fixed.file,
+          current_name: base,
+          ext: path.extname(base).replace('.', '').toLowerCase(),
+        });
+        r.file = fixed.file;
+        fixNote = '（已自动合并分离的音视频）';
+      } else if (!fixed.ok) {
+        fixNote = '（' + fixed.reason + '）';
+      }
+    } catch (e) {
+      fixNote = '（完整性检查异常：' + (e && e.message ? e.message : e) + '）';
+    }
+  }
 
   let converted = false;
   let convertError = '';
@@ -91,8 +117,9 @@ async function downloadOne(videoId, force) {
     ok: !!r.ok,
     error: r.error || convertError || '',
     converted,
+    note: fixNote,
   });
-  return Object.assign({}, r, { converted, convertError });
+  return Object.assign({}, r, { converted, convertError, fixNote });
 }
 
 function createWindow() {

@@ -137,7 +137,10 @@ async function downloadVideo(store, ytdlp, videoId, storageDir, emit, opts = {})
 
   const res = await ytdlp.download(row.source_url, outputDir, (pct, speed, eta, line) => {
     if (emit) emit('download:progress', { videoId, title: row.title || '', percent: pct, speed, eta });
-  }, cookies, { concurrent_fragments: parseInt((opts && opts.concurrent_fragments) || 0, 10) });
+  }, cookies, {
+    concurrent_fragments: parseInt((opts && opts.concurrent_fragments) || 0, 10),
+    ffmpeg_path: (opts && opts.ffmpeg_path) || '',
+  });
 
   if (!res.ok) {
     store.updateVideo(videoId, { status: 'failed', error_message: res.error });

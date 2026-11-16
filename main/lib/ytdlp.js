@@ -78,21 +78,26 @@ class YtDlp {
     ensureDir(outputDir);
 
     const format = options.format || 'bv*+ba/b';
-    const merge = options.merge_format || 'mp4';
+    // 合并容器：留空则由 yt-dlp 自动挑选最合适的（opus 音轨在 mp4 里属实验特性会失败）
+    const merge = (options.merge_format || '').trim();
     const retries = parseInt(options.retries || 3, 10);
     const maxHeight = parseInt(options.max_height || 0, 10);
     const writeInfo = options.write_info_json !== undefined ? options.write_info_json : true;
     const extra = (options.extra_args || '').trim();
     // 分片并发：HLS/DASH 流可多路同时拉取，吃满带宽与 CPU
     const fragments = parseInt(options.concurrent_fragments || 0,  10);
+    // 显式指定 ffmpeg 位置：否则 yt-dlp 找不到 ffmpeg 就无法合并音视频
+    const ffmpegPath = (options.ffmpeg_path || '').trim();
 
     const args = [
       this.binary, '--newline', '--no-color', '--no-warnings', '--no-playlist',
       '--no-part', '--retries', String(retries), '--fragment-retries', String(retries),
-      '--socket-timeout', '30', '--format', format, '--merge-output-format', merge,
+      '--socket-timeout', '30', '--format', format,
       '--output', path.join(outputDir, '%(title).150B [%(id)s].%(ext)s'),
       '--no-mtime',
     ];
+    if (merge) args.push('--merge-output-format', merge);
+    if (ffmpegPath) args.push('--ffmpeg-location', ffmpegPath);
     // 让 yt-dlp 把最终产物路径写入独立文件：并发下载时不会被同目录的其他文件干扰
     const uid = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
     const pathFile = '.mh-path-' + uid + '.txt';

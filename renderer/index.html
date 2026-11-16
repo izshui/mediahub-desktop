@@ -334,6 +334,7 @@ api.onEvent((data) => {
     a.percent = payload.ok ? 100 : (a.percent || 0);
     a.speed = ''; a.eta = '';
     if (payload.converted) a.title = (a.title || '') + '（已转音频）';
+    if (payload.note) a.note = payload.note;
     state.active[payload.videoId] = a;
     state.batchDone = (state.batchDone || 0) + 1;
     renderActiveDownloads();
@@ -404,9 +405,9 @@ function renderActiveDownloads() {
     const pct = Math.max(0, Math.min(100, x.percent || 0));
     let sub;
     if (x.status === 'converting') sub = '正在转音频… ' + Math.round(pct) + '%';
-    else if (x.status === 'done') sub = '完成' + (x.convertedNote || '');
+    else if (x.status === 'done') sub = '完成' + (x.note || '') + (x.convertedNote || '');
     else if (x.status === 'failed') sub = '失败：' + (x.error || '未知错误');
-    else sub = (x.speed || '') + (x.eta ? '　ETA ' + x.eta : '');
+    else sub = (x.speed || '') + (x.eta ? '　ETA ' + x.eta : '') + (x.note || '');
     return `
       <div class="item">
         <div class="grow">

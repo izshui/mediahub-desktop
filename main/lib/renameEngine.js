@@ -7,7 +7,8 @@
  * replace / case / trim / sanitize / smart / slug / transliterate。
  */
 const { mbLen, mbSubstr, mbStrToLower, mbStrToUpper, mbTitleCase } = require('./mb');
-const { parse: parseName, slug: makeSlug } = require('./nameParser');
+const { parse: parseName, slug: makeSlug, analyze: analyzeName } = require('./nameParser');
+const { clean: cleanName, compose: composeName } = require('./smartName');
 const { convert: convertCharset } = require('./charset');
 const { clean: sanitizeClean } = require('./sanitizer');
 
@@ -139,10 +140,15 @@ class RenameEngine {
     return value;
   }
 
-  renderTemplate(tpl, base, ext, ctx) {
+  renderTemplate(tpl, base, ext, ctx, info) {
     const parsed = parseName(ctx.title !== '' ? ctx.title : base);
     const meta = ctx.meta || {};
     const index = parseInt(ctx.index || 0, 10);
+
+    // 清洗后的信息（智能生成规则会传入），缺省时退回基础解析
+    const cleanTitle = info ? (info.core || info.title || parsed.title) : parsed.title;
+    const channel = info ? (info.channel || '') : '';
+    const artistName = info ? (info.artist || '') : parsed.artist;
 
     const pad = (n, len) => String(n).padStart(len, '0');
     const now = new Date();
@@ -150,8 +156,11 @@ class RenameEngine {
     const hms = `${ymd}_${pad(now.getHours(), 2)}${pad(now.getMinutes(), 2)}${pad(now.getSeconds(), 2)}`;
 
     const map = {
-      '{title}': parsed.title,
-      '{artist}': parsed.artist,
+      '{title}': cleanTitle,
+      '{core}': cleanTitle,
+      '{clean_title}': cleanTitle,
+      '{artist}': artistName,
+      '{channel}': channel,
       '{subtitle}': parsed.subtitle,
       '{episode}': parsed.episode !== null ? String(parsed.episode) : '',
       '{season}': parsed.season !== null ? String(parsed.season) : '',
@@ -174,6 +183,8 @@ class RenameEngine {
     };
 
     let result = tpl.replace(/\{\{index:(\d+)\}\}/g, (_, len) => pad(index, parseInt(len, 10)));
+    // 容错：把 {{key}} 视为 {key}（避免手误写成双花括号导致占位符不生效）
+    result = result.replace(/\{\{([a-zA-Z_][a-zA-Z0-9_]*)\}\}/g, '{$1}');
     for (const [k, v] of Object.entries(map)) {
       result = result.split(k).join(v);
     }
@@ -332,19 +343,23 @@ class RenameEngine {
 
   applySmart(base, p, ctx) {
     const source = ctx.title !== '' ? ctx.title : base;
-    const parsed = parseName(source);
-    const tpl = p.template || '';
+    // 先做清洗分析：剥离视频 ID / format 后缀 / 标签段，抽出核心标题与频道
+    const info = cleanName(source, {
+      strip_emoji: !!p.strip_emoji,
+      channel_as_artist: p.channel_as_artist !== false,
+    });
+
+    const tpl = (p.template || '').trim();
     let r;
     if (tpl === '') {
-      const parts = [];
-      if (parsed.artist !== '') parts.push(parsed.artist);
-      if (parsed.episode !== null) parts.push('E' + String(parsed.episode).padStart(2, '0'));
-      parts.push(parsed.title !== '' ? parsed.title : base);
-      r = parts.join(' - ');
+      r = composeName(info);
     } else {
-      r = this.renderTemplate(tpl, base, '', ctx);
+      r = this.renderTemplate(tpl, base, '', ctx, info);
     }
-    if (r.trim() === '' && p.use_original_fallback) return base;
+    if (!r || r.trim() === '') {
+      if (p.use_original_fallback) return base;
+      return base;
+    }
     return r.trim();
   }
 
@@ -429,7 +444,10 @@ class RenameEngine {
         { name: 'collapse_space', label: '合并连续空白', type: 'bool', default: true },
       ]},
       { type: 'smart', label: '智能生成', fields: [
-        { name: 'template', label: '模板(留空用默认)', type: 'text', default: '' },
+        { name: 'template', label: '模板（留空用默认「频道 - 核心标题」）', type: 'text', default: '',
+          help: '可用占位符：{artist} {channel} {title} {core} {clean_title} {index3} {date} {original}；双花括号 {{title}} 也会被识别' },
+        { name: 'strip_emoji', label: '去掉表情符号', type: 'bool', default: false },
+        { name: 'channel_as_artist', label: '无作者时用频道名', type: 'bool', default: true },
         { name: 'use_original_fallback', label: '解析失败时用原名', type: 'bool', default: true },
       ]},
       { type: 'slug', label: 'URL 安全 slug', fields: [
