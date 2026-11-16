@@ -81,8 +81,12 @@
       <div class="card">
         <div class="row between">
           <h2>媒体库</h2>
-          <select id="libFilter"><option value="">全部播放列表</option></select>
+          <div class="row">
+            <select id="libFilter"><option value="">全部播放列表</option></select>
+            <button id="btnDelSelected">删除所选</button>
+          </div>
         </div>
+        <p class="hint">勾选左侧复选框可批量删除；删除时可选择是否一并删除磁盘上的文件。</p>
         <div id="videoTable" class="table"></div>
       </div>
     </section>
@@ -472,11 +476,54 @@ function renderPlaylists() {
         <div class="progress" id="plprog-${p.id}"><i style="width:0"></i></div>
       </div>
       <button data-dl="${p.id}">下载全部</button>
-      <button data-redl="${p.id}">重新下载</button>`;
+      <button data-redl="${p.id}">重新下载</button>
+      <button data-pdel="${p.id}">删除</button>`;
     box.appendChild(div);
     div.querySelector('[data-dl]').addEventListener('click', (e) => doPlaylistDownload(p.id, false, e.target));
     div.querySelector('[data-redl]').addEventListener('click', (e) => doPlaylistDownload(p.id, true, e.target));
+    div.querySelector('[data-pdel]').addEventListener('click', () => doPlaylistDelete(p.id));
   });
+}
+
+// ---------------- 删除（两段式确认：先删记录，再问是否删文件） ----------------
+function fileListText(rows) {
+  const names = rows.slice(0, 8).map((v) => '· ' + (v.current_name || v.original_name || v.title || '未命名')).join('\n');
+  return names + (rows.length > 8 ? '\n…等共 ' + rows.length + ' 个文件' : '');
+}
+
+/** 询问是否一并删除磁盘文件 */
+function askDeleteFiles(rows) {
+  if (rows.length === 0) return false;
+  return confirm(
+    '是否同时删除磁盘上的文件？\n\n将删除：\n' + fileListText(rows) +
+    '\n\n此操作不可恢复。\n\n确定 = 一并删除文件\n取消 = 仅删除记录（保留文件）'
+  );
+}
+
+async function doPlaylistDelete(playlistId) {
+  const p = state.playlists.find((x) => x.id == playlistId);
+  if (!p) return;
+  const vids = state.videos.filter((v) => v.playlist_id == playlistId);
+  if (!confirm(
+    '确定删除播放列表「' + (p.title || '未命名') + '」吗？\n' +
+    '将同时移除 ' + vids.length + ' 条视频记录（下载历史会保留）。'
+  )) return;
+
+  const fileRows = vids.filter((v) => v.filepath || v.audio_path);
+  const deleteFiles = askDeleteFiles(fileRows);
+
+  try {
+    const r = await api.call('playlist:remove', { playlistId, deleteFiles });
+    if (r && r.ok) {
+      toast('已删除：' + r.removedVideos + ' 条记录' + (deleteFiles ? '，' + r.removedFiles + ' 个文件' : ''));
+      if (r.fileErrors && r.fileErrors.length) toast('部分文件删除失败：\n' + r.fileErrors.join('\n'));
+    } else {
+      toast('删除失败：' + ((r && r.error) || '未知错误'));
+    }
+  } catch (e) {
+    toast('删除失败：' + (e && e.message ? e.message : e));
+  }
+  refreshPlaylists(); refreshVideos(); refreshRecords();
 }
 
 // ---------------- 下载（含重复下载确认） ----------------
@@ -542,8 +589,10 @@ function renderLibrary() {
   const tbl = $('#videoTable');
   if (rows.length === 0) { tbl.innerHTML = '<div class="msg">暂无文件。</div>'; return; }
   tbl.innerHTML = `<table class="table"><thead><tr>
+    <th style="width:30px"><input type="checkbox" id="libSelAll" title="全选"/></th>
     <th>标题</th><th>状态</th><th>文件名</th><th>大小</th><th>操作</th></tr></thead><tbody>
     ${rows.map((v) => `<tr>
+      <td><input type="checkbox" data-vsel="${v.id}"/></td>
       <td>${escapeHtml(v.title)}</td>
       <td>${statusBadge(v.status)}</td>
       <td>${escapeHtml(v.current_name || v.original_name || '')}</td>
@@ -552,9 +601,18 @@ function renderLibrary() {
         <button data-vdl="${v.id}">下载</button>
         <button data-open="${v.id}">打开</button>
         <button data-show="${v.id}">位置</button>
+        <button data-vdel="${v.id}">删除</button>
       </td></tr>`).join('')}
     </tbody></table>`;
+
+  const selAll = $('#libSelAll');
+  if (selAll) {
+    selAll.addEventListener('change', () => {
+      $$('#videoTable [data-vsel]').forEach((c) => { c.checked = selAll.checked; });
+    });
+  }
   tbl.querySelectorAll('[data-vdl]').forEach((b) => b.addEventListener('click', () => doVideoDownload(b.dataset.vdl)));
+  tbl.querySelectorAll('[data-vdel]').forEach((b) => b.addEventListener('click', () => doVideoDelete([b.dataset.vdel])));
   tbl.querySelectorAll('[data-open]').forEach((b) => b.addEventListener('click', async () => {
     const v = state.videos.find((x) => x.id == b.dataset.open);
     if (v && v.filepath) api.call('open:folder', v.filepath);
@@ -564,6 +622,38 @@ function renderLibrary() {
     if (v && v.filepath) api.call('show:item', v.filepath);
   }));
 }
+
+// 媒体库删除（单个或批量）
+async function doVideoDelete(ids) {
+  const list = (ids || []).map((id) => state.videos.find((v) => v.id == id)).filter(Boolean);
+  if (list.length === 0) { toast('请先选择要删除的条目'); return; }
+
+  const detail = list.length <= 3
+    ? '\n\n' + list.map((v) => '· ' + (v.current_name || v.original_name || v.title)).join('\n')
+    : '';
+  if (!confirm('确定删除 ' + list.length + ' 条媒体库记录吗？' + detail)) return;
+
+  const fileRows = list.filter((v) => v.filepath || v.audio_path);
+  const deleteFiles = askDeleteFiles(fileRows);
+
+  try {
+    const r = await api.call('video:remove', { videoIds: list.map((v) => v.id), deleteFiles });
+    if (r && r.ok) {
+      toast('已删除：' + r.removedCount + ' 条记录' + (deleteFiles ? '，' + r.removedFiles + ' 个文件' : ''));
+      if (r.fileErrors && r.fileErrors.length) toast('部分文件删除失败：\n' + r.fileErrors.join('\n'));
+    } else {
+      toast('删除失败：' + ((r && r.error) || '未知错误'));
+    }
+  } catch (e) {
+    toast('删除失败：' + (e && e.message ? e.message : e));
+  }
+  refreshVideos(); refreshPlaylists(); refreshRecords();
+}
+
+$('#btnDelSelected').addEventListener('click', () => {
+  const ids = $$('#videoTable [data-vsel]:checked').map((c) => c.dataset.vsel);
+  doVideoDelete(ids);
+});
 
 // ---------------- 下载记录 ----------------
 async function refreshRecords() {
@@ -586,7 +676,7 @@ function renderRecords() {
       <td>${fmtTime(d.downloaded_at)}</td>
       <td>${escapeHtml(d.title)}</td>
       <td>${escapeHtml(d.platform)}</td>
-      <td>${escapeHtml(d.filename)}</td>
+      <td>${escapeHtml(d.filename)}${d.file_missing ? ' <span class="badge bad">文件已删除</span>' : ''}</td>
       <td>${fmtBytes(d.size)}</td>
       <td>
         <button data-show="${d.id}">位置</button>

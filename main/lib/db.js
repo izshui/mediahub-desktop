@@ -103,6 +103,24 @@ class Store {
     return v;
   }
 
+  /** 删除视频记录（连带其改名历史；下载记录保留为历史） */
+  deleteVideo(id) {
+    this.data.videos = this.data.videos.filter((v) => v.id !== id);
+    this.data.history = this.data.history.filter((h) => h.video_id !== id);
+    this.save();
+    return true;
+  }
+
+  /** 删除播放列表记录（连带其下全部视频与改名历史） */
+  deletePlaylist(id) {
+    const videoIds = this.data.videos.filter((v) => v.playlist_id === id).map((v) => v.id);
+    this.data.videos = this.data.videos.filter((v) => v.playlist_id !== id);
+    this.data.history = this.data.history.filter((h) => !videoIds.includes(h.video_id));
+    this.data.playlists = this.data.playlists.filter((p) => p.id !== id);
+    this.save();
+    return videoIds.length;
+  }
+
   // ---------------- rules ----------------
   listRules(enabledOnly = false) {
     let r = this.data.rules;
@@ -178,6 +196,18 @@ class Store {
     this.data.downloads = [];
     this.save();
     return true;
+  }
+
+  /** 标记下载记录中对应文件已被删除（记录保留为历史，仅打标记） */
+  markDownloadsMissing(paths) {
+    const set = new Set(paths || []);
+    if (set.size === 0) return 0;
+    let n = 0;
+    for (const d of this.data.downloads) {
+      if (set.has(d.filepath) && !d.file_missing) { d.file_missing = true; n++; }
+    }
+    if (n > 0) this.save();
+    return n;
   }
 }
 

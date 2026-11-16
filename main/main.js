@@ -10,6 +10,8 @@ const { checkBinaries, installYtDlp, installFFmpeg, resolveBinary } = require('.
 const { extractPlaylist, downloadVideo, detectDuplicates } = require('./lib/downloadService');
 const { convertVideo } = require('./lib/convertService');
 const { preview, execute, revert, resolveRules, previewLocal, executeLocal } = require('./lib/renameService');
+const { removeFile, removeDir, countFiles } = require('./lib/fileCleaner');
+const { removePlaylist, removeVideos } = require('./lib/deleteService');
 const { RenameEngine } = require('./lib/renameEngine');
 
 let win = null;
@@ -167,6 +169,15 @@ function registerIpc() {
 
   ipcMain.handle('videos:list', (_, playlistId) => store.listVideos(playlistId));
   ipcMain.handle('video:get', (_, id) => store.getVideo(id));
+
+  // ---------------- 删除（记录 / 文件） ----------------
+  ipcMain.handle('playlist:remove', async (_, { playlistId, deleteFiles }) => {
+    return removePlaylist(store, STORAGE_DIR(), playlistId, !!deleteFiles);
+  });
+
+  ipcMain.handle('video:remove', async (_, { videoIds, deleteFiles }) => {
+    return removeVideos(store, STORAGE_DIR(), videoIds, !!deleteFiles);
+  });
 
   ipcMain.handle('download:video', async (_, args) => {
     const a = args || {};
