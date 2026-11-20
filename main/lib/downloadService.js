@@ -18,8 +18,8 @@ function detectPlatform(url, extractor) {
   return 'other';
 }
 
-async function extractPlaylist(store, ytdlp, url, cookies, emit) {
-  const res = await ytdlp.extractPlaylist(url, cookies || '');
+async function extractPlaylist(store, ytdlp, url, cookies, emit, opts = {}) {
+  const res = await ytdlp.extractPlaylist(url, cookies || '', 300, opts.proxy || '');
   if (!res.ok) return res;
   const platform = detectPlatform(url, '');
 
@@ -138,6 +138,7 @@ async function downloadVideo(store, ytdlp, videoId, storageDir, emit, opts = {})
   const res = await ytdlp.download(row.source_url, outputDir, (pct, speed, eta, line) => {
     if (emit) emit('download:progress', { videoId, title: row.title || '', percent: pct, speed, eta });
   }, cookies, {
+    proxy: (opts && opts.proxy) || '',
     concurrent_fragments: parseInt((opts && opts.concurrent_fragments) || 0, 10),
     ffmpeg_path: (opts && opts.ffmpeg_path) || '',
     control: (opts && opts.control) || null,

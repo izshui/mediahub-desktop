@@ -5,6 +5,24 @@
 
 ---
 
+## [1.8.0] - 2026-11-20
+
+### 修复
+
+- **下载 403 Forbidden（国内网络核心问题）**
+  - 根因：设置里的「网络代理」此前只用于下载 ffmpeg/yt-dlp 二进制，从未传给 yt-dlp 本身，
+    导致解析播放列表与下载视频数据时直连 YouTube CDN，被拒返回 `HTTP Error 403: Forbidden`。
+  - 修复：`ytdlp.extractPlaylist` / `download` / `probe` 全链路新增 `proxy` 参数，自动把设置的代理
+    转成 `--proxy` 传给 yt-dlp；`downloadService` 与 `main.js` 从 settings 逐层透传。支持 http/socks5 代理。
+  - 实测：截图中的失败视频 `JY2AOpBw6Dc`，修复后带代理下载成功（15.1MB，音视频正常合并）。
+- **`--print-to-file` 参数格式错误导致下载误判失败**
+  - yt-dlp 新版本中该参数需两个值 `[WHEN:]TEMPLATE FILE`，旧代码写成单个冒号拼接串，
+    造成参数错位、报 `'4' is not a valid URL`、路径文件不生成、下载被误判为失败。
+  - 改为 `['--print-to-file', 'after_move:filepath', pathFile]`，路径回传恢复正常。
+- 403 错误提示增强：附带当前代理状态与排查建议（节点失效 / 需填 cookie / 未配置代理）。
+
+---
+
 ## [1.7.0] - 2026-11-20
 
 ### 新增

@@ -121,6 +121,7 @@ async function downloadOne(videoId, force) {
   try {
     r = await downloadVideo(store, ytDlp, videoId, STORAGE_DIR(), emit, {
       force: !!force,
+      proxy: settings.proxy || '',
       concurrent_fragments: parseInt(settings.concurrent_fragments || 4, 10),
       ffmpeg_path: settings.ffmpeg || '',
       control,
@@ -239,7 +240,7 @@ function registerIpc() {
   ipcMain.handle('playlists:list', () => store.listPlaylists());
   ipcMain.handle('playlist:get', (_, id) => store.getPlaylist(id));
   ipcMain.handle('playlist:create', async (_, { url, cookies }) => {
-    return await extractPlaylist(store, ytDlp, url, cookies || '', emit);
+    return await extractPlaylist(store, ytDlp, url, cookies || '', emit, { proxy: settings.proxy || '' });
   });
   ipcMain.handle('playlist:setAutoConvert', (_, { playlistId, autoConvert }) => {
     return store.updatePlaylist(playlistId, { auto_convert: !!autoConvert });

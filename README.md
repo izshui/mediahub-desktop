@@ -1,6 +1,6 @@
 # Vido
 
-> **慧天科技出品** ｜ 当前版本：v1.7.0 ｜ 更新日期：2026-11-20 ｜ 完整变更见 [CHANGELOG.md](CHANGELOG.md)
+> **慧天科技出品** ｜ 当前版本：v1.8.0 ｜ 更新日期：2026-11-20 ｜ 完整变更见 [CHANGELOG.md](CHANGELOG.md)
 
 **Vido — 视频抓取、格式转换、批量重命名一站式工具。**
 
@@ -12,8 +12,8 @@
 
 | 平台 | 下载 |
 |---|---|
-| macOS Intel (x64) | [Vido-1.7.0-mac-x64.dmg](https://github.com/izshui/mediahub-desktop/releases/download/v1.7.0/Vido-1.7.0-mac-x64.dmg) |
-| macOS 免安装版 | [Vido-1.7.0-mac-x64.zip](https://github.com/izshui/mediahub-desktop/releases/download/v1.7.0/Vido-1.7.0-mac-x64.zip) |
+| macOS Intel (x64) | [Vido-1.8.0-mac-x64.dmg](https://github.com/izshui/mediahub-desktop/releases/download/v1.8.0/Vido-1.8.0-mac-x64.dmg) |
+| macOS 免安装版 | [Vido-1.8.0-mac-x64.zip](https://github.com/izshui/mediahub-desktop/releases/download/v1.8.0/Vido-1.8.0-mac-x64.zip) |
 
 首次打开若提示「无法验证开发者」，执行：`xattr -rd com.apple.quarantine /Applications/Vido.app`
 
@@ -47,6 +47,7 @@
 
 | 版本 | 日期 | 概要 |
 |---|---|---|
+| **v1.8.0** | 2026-11-20 | 修复下载 403：把设置的代理传给 yt-dlp（解析/下载/探测全链路）；修复 `--print-to-file` 参数格式错误导致的误判失败；403 错误给出可操作提示 |
 | **v1.7.0** | 2026-11-20 | 播放列表新增「继续下载」（只补未完成、跳过已下载、不弹重复确认） |
 | v1.6.0 | 2026-11-20 | 更名 Vido + 全新黑翼图标；修复重启后"已下载 0"与暂停关闭导致任务卡死、需重新下载；默认关闭调试模式 |
 | v1.5.0 | 2026-11-16 | 统一数据目录（安装版不再丢历史记录）；新增下载暂停/继续 |
@@ -110,8 +111,8 @@ npm run dist:win
 
 产物在 `dist/` 目录：
 
-- macOS：`Vido-1.7.0-mac-x64.dmg`（可拖拽安装）/ `Vido-1.7.0-mac-x64.zip`
-- Windows：`Vido Setup 1.7.0.exe`
+- macOS：`Vido-1.8.0-mac-x64.dmg`（可拖拽安装）/ `Vido-1.8.0-mac-x64.zip`
+- Windows：`Vido Setup 1.8.0.exe`
 
 ### macOS 打包说明（`tools/build-mac.sh`）
 

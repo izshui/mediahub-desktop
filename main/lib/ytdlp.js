@@ -24,13 +24,20 @@ class YtDlp {
     return run([this.binary, '--version'], { timeout: 30 }).then((r) => r.stdout.trim());
   }
 
-  async extractPlaylist(url, cookies = '', timeout = 300) {
+  /** 统一的代理参数：把应用设置的代理转成 yt-dlp 的 --proxy 参数 */
+  static proxyArgs(proxy) {
+    const p = (proxy || '').trim();
+    return p ? ['--proxy', p] : [];
+  }
+
+  async extractPlaylist(url, cookies = '', timeout = 300, proxy = '') {
     if (!this.available()) {
       return { ok: false, title: '', entries: [], error: '未找到 yt-dlp 可执行文件，请在设置中安装或指定路径' };
     }
     const args = [
       this.binary, '--flat-playlist', '--dump-single-json', '--no-warnings',
       '--ignore-errors', '--no-playlist-reverse', '--socket-timeout', '20',
+      ...YtDlp.proxyArgs(proxy),
     ];
     if (cookies && fs.existsSync(cookies)) {
       args.push('--cookies', cookies);
@@ -95,13 +102,15 @@ class YtDlp {
       '--socket-timeout', '30', '--format', format,
       '--output', path.join(outputDir, '%(title).150B [%(id)s].%(ext)s'),
       '--no-mtime',
+      ...YtDlp.proxyArgs(options.proxy),
     ];
     if (merge) args.push('--merge-output-format', merge);
     if (ffmpegPath) args.push('--ffmpeg-location', ffmpegPath);
     // 让 yt-dlp 把最终产物路径写入独立文件：并发下载时不会被同目录的其他文件干扰
+    // 注意：--print-to-file 需要两个参数 [WHEN:]TEMPLATE FILE，写成单个冒号拼接会被解析为额外 URL
     const uid = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
     const pathFile = '.mh-path-' + uid + '.txt';
-    args.push('--print-to-file', 'after_move:filepath:' + pathFile);
+    args.push('--print-to-file', 'after_move:filepath', pathFile);
     if (maxHeight > 0) { args.push('--format-sort', 'res:' + maxHeight); }
     if (writeInfo) { args.push('--write-info-json', '--no-clean-info-json'); }
     if (cookies && fs.existsSync(cookies)) { args.push('--cookies', cookies); }
@@ -138,7 +147,7 @@ class YtDlp {
 
     if (r.code !== 0) {
       this.cleanupPathFile(outputDir, pathFile);
-      return { ok: false, file: null, error: this.extractError(errLines, r.stderr), meta: {} };
+      return { ok: false, file: null, error: this.extractError(errLines, r.stderr, options.proxy), meta: {} };
     }
 
     // 优先使用 yt-dlp 回传的精确路径；失败再退回按时间猜测
@@ -177,9 +186,9 @@ class YtDlp {
     return i > 0 ? file.slice(0, i) + '.info.json' : null;
   }
 
-  async probe(url, cookies = '', timeout = 120) {
+  async probe(url, cookies = '', timeout = 120, proxy = '') {
     if (!this.available()) return { ok: false, error: '未找到 yt-dlp' };
-    const args = [this.binary, '--dump-single-json', '--no-warnings', '--skip-download', '--no-playlist'];
+    const args = [this.binary, '--dump-single-json', '--no-warnings', '--skip-download', '--no-playlist', ...YtDlp.proxyArgs(proxy)];
     if (cookies && fs.existsSync(cookies)) args.push('--cookies', cookies);
     args.push('--', url);
     const r = await run(args, { timeout });
@@ -236,12 +245,23 @@ class YtDlp {
     } catch (e) { return {}; }
   }
 
-  extractError(lines, stderr) {
-    if (lines.length) return lines.slice(0, 3).join(' | ').slice(0, 500);
-    const s = (stderr || '').trim();
-    if (s === '') return '下载失败（未知错误）';
-    const keep = s.split(/\r\n|\r|\n/).filter((l) => l.trim() !== '').slice(-3);
-    return keep.join(' | ').slice(0, 500);
+  extractError(lines, stderr, proxy) {
+    let msg;
+    if (lines.length) msg = lines.slice(0, 3).join(' | ').slice(0, 500);
+    else {
+      const s = (stderr || '').trim();
+      if (s === '') return '下载失败（未知错误）';
+      const keep = s.split(/\r\n|\r|\n/).filter((l) => l.trim() !== '').slice(-3);
+      msg = keep.join(' | ').slice(0, 500);
+    }
+    // 403 常见于代理未生效 / 代理节点被封 / 缺少 cookie，给出可操作提示
+    if (/403|forbidden/i.test(msg)) {
+      const tip = proxy
+        ? '（当前已配置代理 ' + proxy + '，若节点失效请到「设置」更换；部分视频需登录 cookie，可在解析时填入）'
+        : '（未在「设置」配置网络代理，国内访问 YouTube 需先设置代理）';
+      return msg + ' ' + tip;
+    }
+    return msg;
   }
 }
 
