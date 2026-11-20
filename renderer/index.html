@@ -508,12 +508,12 @@ function renderPlaylists() {
         <div class="sub">${escapeHtml(p.platform)} · 共 ${p.item_count || vids.length} 条 · 已下载 ${done}${p.last_parsed_at ? ' · 解析于 ' + fmtTime(p.last_parsed_at) : ''}</div>
         <div class="progress" id="plprog-${p.id}"><i style="width:0"></i></div>
       </div>
-      <button data-dl="${p.id}">下载全部</button>
+      <button class="primary" data-continue="${p.id}">继续下载</button>
       <button data-redl="${p.id}">重新下载</button>
       <button data-pdel="${p.id}">删除</button>`;
     box.appendChild(div);
-    div.querySelector('[data-dl]').addEventListener('click', (e) => doPlaylistDownload(p.id, false, e.target));
-    div.querySelector('[data-redl]').addEventListener('click', (e) => doPlaylistDownload(p.id, true, e.target));
+    div.querySelector('[data-continue]').addEventListener('click', (e) => doPlaylistDownload(p.id, 'continue', e.target));
+    div.querySelector('[data-redl]').addEventListener('click', (e) => doPlaylistDownload(p.id, 'reload', e.target));
     div.querySelector('[data-pdel]').addEventListener('click', () => doPlaylistDelete(p.id));
   });
 }
@@ -573,19 +573,27 @@ function duplicateText(list) {
   return items + (arr.length > 8 ? '\n…等共 ' + arr.length + ' 项' : '');
 }
 
-async function doPlaylistDownload(playlistId, includeDone, btn) {
-  const label = includeDone ? '重新下载' : '下载全部';
+async function doPlaylistDownload(playlistId, mode, btn) {
+  // continue：继续下载，只下 pending/failed，跳过已下载，不弹重复确认
+  // reload：重新下载，包含已下载项，命中重复时弹确认后强制重下
+  const isContinue = mode === 'continue';
+  const label = isContinue ? '继续下载' : '重新下载';
   const busy = (t) => { if (btn) { btn.disabled = (t !== null); btn.textContent = t === null ? label : t; } };
   try {
     busy('下载中…');
-    let r = await api.call('download:playlist', { playlistId, includeDone });
+    let r = await api.call('download:playlist', {
+      playlistId,
+      includeDone: !isContinue,
+      skipDuplicates: isContinue,
+    });
     if (r && r.needConfirm) {
       busy(null);
       if (!confirm(r.error + '\n\n' + duplicateText(r.duplicates) + '\n\n确定要重新下载吗？')) return;
       busy('下载中…');
-      r = await api.call('download:playlist', { playlistId, includeDone, force: true });
+      r = await api.call('download:playlist', { playlistId, includeDone: true, force: true });
     }
-    if (r && r.ok) toast('下载完成：成功 ' + r.okCount + '，失败 ' + r.failCount);
+    if (r && r.ok && r.okCount === 0 && r.message) toast(r.message);
+    else if (r && r.ok) toast('下载完成：成功 ' + r.okCount + '，失败 ' + r.failCount);
     else if (r && r.error) toast(r.error);
   } catch (e) {
     toast('下载失败：' + (e && e.message ? e.message : e));

@@ -270,7 +270,8 @@ function registerIpc() {
     const videos = a.includeDone ? all : all.filter((v) => v.status === 'pending' || v.status === 'failed');
     if (videos.length === 0) return { ok: true, okCount: 0, failCount: 0, message: '没有需要下载的条目' };
 
-    if (!a.force) {
+    // skipDuplicates=true（"继续下载"）：只下未完成项，跳过重复检测，不弹确认
+    if (!a.force && !a.skipDuplicates) {
       const dups = detectDuplicates(store, videos, STORAGE_DIR());
       if (dups.length > 0) {
         return {
