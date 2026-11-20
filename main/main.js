@@ -186,8 +186,8 @@ function createWindow() {
     },
   });
   win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
-  // 开发时可打开 DevTools（调试完成后可注释掉）
-  win.webContents.openDevTools();
+  // 调试工具默认关闭；仅排障时显式设置环境变量 VIDO_DEVTOOLS=1 才打开
+  if (process.env.VIDO_DEVTOOLS === '1') win.webContents.openDevTools();
 }
 
 // ---------------- IPC ----------------
@@ -377,6 +377,42 @@ function registerIpc() {
 // 必须在 app ready 之前固定 userData 目录，否则开发版与安装版会各用各的目录
 unifyUserDataDir();
 
+/**
+ * 启动回收：把上次异常退出（暂停后关闭、强退、崩溃）时卡在
+ * downloading / converting 的任务恢复正常。
+ *  - 产物已在磁盘且非空 → 视为已完成，标记 downloaded（计入"已下载"，避免重复下载）
+ *  - 产物不存在或为空   → 重置为 pending（允许重新下载）
+ * 这样重启后"已下载 X"计数准确，也不会出现卡死任务永远不下载的情况。
+ */
+function recoverInterruptedTasks() {
+  let completed = 0, reset = 0;
+  try {
+    const fsMod = require('fs');
+    for (const v of store.data.videos) {
+      if (v.status !== 'downloading' && v.status !== 'converting') continue;
+      const f = v.filepath;
+      let usable = false;
+      if (f && fsMod.existsSync(f)) {
+        try { usable = fsMod.statSync(f).size > 0; } catch (e) { usable = false; }
+      }
+      if (usable) {
+        v.status = 'downloaded';
+        delete v.error_message;
+        completed++;
+      } else {
+        v.status = 'pending';
+        delete v.error_message;
+        reset++;
+      }
+    }
+    if (completed || reset) store.flush();
+    if (completed || reset) {
+      console.log(`[Vido] 启动回收：${completed} 个任务恢复为已完成，${reset} 个重置为待下载`);
+    }
+  } catch (e) { /* 回收失败不阻断启动 */ }
+  return { completed, reset };
+}
+
 function bootstrap() {
   const mig = migrateLegacyData();
   loadSettings();
@@ -384,8 +420,9 @@ function bootstrap() {
   fs.mkdirSync(path.join(DATA_DIR(), 'bin'), { recursive: true });
   store = new Store(DATA_DIR());
   if (mig.migrated) {
-    console.log('[MediaHub] 已从旧数据目录迁移：' + mig.from);
+    console.log('[Vido] 已从旧数据目录迁移：' + mig.from);
   }
+  recoverInterruptedTasks();
   refreshBinaries();
   CharsetSetDataDir(
     app.isPackaged
@@ -416,5 +453,14 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 
-// 退出前立即落盘，避免防抖窗口内的下载记录/改名历史丢失
-app.on('before-quit', () => { if (store) store.flush(); });
+// 退出前：先解冻并终止所有被暂停的下载进程组，再立即落盘，
+// 避免 SIGSTOP 冻结的 yt-dlp/ffmpeg 变成孤儿进程，也避免防抖窗口内的状态丢失
+app.on('before-quit', () => {
+  for (const c of downloadControls.values()) {
+    try {
+      if (c.paused && typeof c.resume === 'function') c.resume(); // SIGCONT 解冻
+      if (typeof c.stop === 'function') c.stop();                 // 终止进程组
+    } catch (e) { /* ignore */ }
+  }
+  if (store) store.flush();
+});

@@ -1,12 +1,12 @@
 #!/bin/bash
-# MediaHub macOS 打包脚本
+# Vido macOS 打包脚本
 # 特点：全程离线 —— 通过 --config.electronDist=node_modules/electron/dist 复用本地已下载的
 #       Electron 运行时，不联网重新下载；产物做 ad-hoc 签名，本机可直接运行。
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
-APP_NAME="MediaHub"
+APP_NAME="Vido"
 VERSION="$(node -p "require('./package.json').version")"
 OUT="$ROOT/dist"
 APP="$OUT/mac/$APP_NAME.app"

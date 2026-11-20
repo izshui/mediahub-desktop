@@ -1,143 +1,97 @@
 'use strict';
 /**
- * 生成应用图标 build/icon.png（1024x1024，纯 Node zlib 编码 PNG，无第三方依赖）。
- * 图形：圆角方形渐变底 + 白色播放三角，MediaHub 的媒体工具意象。
+ * 从 build/icon-source.jpg 生成各平台应用图标（Vido 黑翼下载图标）。
+ *  - build/icon.png  : 1024x1024 透明底 PNG
+ *  - build/icon.icns : macOS 图标（iconutil）
+ *  - build/icon.ico  : Windows 图标（PIL）
+ * 需要 python3 + Pillow（pip install pillow）；icns 使用 macOS 自带 iconutil。
  */
 const fs = require('fs');
 const path = require('path');
-const zlib = require('zlib');
+const os = require('os');
+const { execFileSync } = require('child_process');
 
-const SIZE = 1024;
+const ROOT = path.join(__dirname, '..');
+const BUILD = path.join(ROOT, 'build');
+const SRC = path.join(BUILD, 'icon-source.jpg');
+const OUT_PNG = path.join(BUILD, 'icon.png');
+const OUT_ICNS = path.join(BUILD, 'icon.icns');
+const OUT_ICO = path.join(BUILD, 'icon.ico');
 
-// ---------- PNG 编码 ----------
-let CRC_TABLE = null;
-function crc32(buf) {
-  if (!CRC_TABLE) {
-    CRC_TABLE = new Int32Array(256);
-    for (let n = 0; n < 256; n++) {
-      let c = n;
-      for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
-      CRC_TABLE[n] = c;
-    }
+if (!fs.existsSync(SRC)) {
+  console.error('✗ 缺少图标源文件：' + SRC);
+  process.exit(1);
+}
+
+const py = `
+from PIL import Image
+import sys
+src, out_png, out_ico = sys.argv[1], sys.argv[2], sys.argv[3]
+S = 1024
+img = Image.open(src).convert('RGBA')
+w, h = img.size
+px = img.load()
+# 1) 近白背景转透明（保留主体）
+for y in range(h):
+    for x in range(w):
+        r, g, b, a = px[x, y]
+        mn = min(r, g, b)
+        if mn >= 246: alpha = 0
+        elif mn <= 225: alpha = 255
+        else:
+            t = (mn - 225) / (246 - 225)
+            alpha = int(255 * (1 - t))
+        if alpha < a: px[x, y] = (r, g, b, alpha)
+bbox = img.getbbox()
+if bbox: img = img.crop(bbox)
+cw, ch = img.size
+target = int(S * 0.86)
+scale = min(target / cw, target / ch)
+nw, nh = int(cw * scale), int(ch * scale)
+img = img.resize((nw, nh), Image.LANCZOS)
+canvas = Image.new('RGBA', (S, S), (0, 0, 0, 0))
+canvas.alpha_composite(img, ((S - nw) // 2, (S - nh) // 2))
+canvas.save(out_png)
+# Windows ico：多尺寸
+canvas.save(out_ico, sizes=[(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)])
+print('PNG + ICO ready')
+`;
+
+const tmpPy = path.join(os.tmpdir(), 'vido_icon_gen_' + process.pid + '.py');
+fs.writeFileSync(tmpPy, py);
+try {
+  execFileSync('python3', [tmpPy, SRC, OUT_PNG, OUT_ICO], { stdio: 'inherit' });
+
+  if (process.platform === 'darwin') {
+    // iconutil 要求目录名以 .iconset 结尾
+    const iconDir = path.join(os.tmpdir(), 'vido-' + process.pid + '.iconset');
+    fs.rmSync(iconDir, { recursive: true, force: true });
+    fs.mkdirSync(iconDir, { recursive: true });
+    const sizes = {
+      'icon_16x16.png': 16, 'icon_16x16@2x.png': 32,
+      'icon_32x32.png': 32, 'icon_32x32@2x.png': 64,
+      'icon_128x128.png': 128, 'icon_128x128@2x.png': 256,
+      'icon_256x256.png': 256, 'icon_256x256@2x.png': 512,
+      'icon_512x512.png': 512, 'icon_512x512@2x.png': 1024,
+    };
+    const py2 = `
+from PIL import Image
+import sys
+im = Image.open(sys.argv[1]).convert('RGBA')
+d = sys.argv[2]
+for name, s in ${JSON.stringify(sizes)}.items():
+    im.resize((s, s), Image.LANCZOS).save(d + '/' + name)
+`;
+    const tmpPy2 = path.join(os.tmpdir(), 'vido_iconset_' + process.pid + '.py');
+    fs.writeFileSync(tmpPy2, py2);
+    execFileSync('python3', [tmpPy2, OUT_PNG, iconDir], { stdio: 'inherit' });
+    execFileSync('iconutil', ['-c', 'icns', iconDir, '-o', OUT_ICNS], { stdio: 'inherit' });
+    fs.rmSync(iconDir, { recursive: true, force: true });
   }
-  let crc = -1;
-  for (let i = 0; i < buf.length; i++) crc = (crc >>> 8) ^ CRC_TABLE[(crc ^ buf[i]) & 0xFF];
-  return (crc ^ -1) >>> 0;
-}
-
-function chunk(type, data) {
-  const len = Buffer.alloc(4);
-  len.writeUInt32BE(data.length, 0);
-  const typeBuf = Buffer.from(type, 'ascii');
-  const crc = Buffer.alloc(4);
-  crc.writeUInt32BE(crc32(Buffer.concat([typeBuf, data])), 0);
-  return Buffer.concat([len, typeBuf, data, crc]);
-}
-
-function encodePng(width, height, rgba) {
-  const sig = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
-  const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(width, 0);
-  ihdr.writeUInt32BE(height, 4);
-  ihdr[8] = 8;   // bit depth
-  ihdr[9] = 6;   // color type: RGBA
-  const raw = Buffer.alloc((width * 4 + 1) * height);
-  for (let y = 0; y < height; y++) {
-    const rowStart = y * (width * 4 + 1);
-    raw[rowStart] = 0; // filter: none
-    rgba.copy(raw, rowStart + 1, y * width * 4, (y + 1) * width * 4);
+  console.log('✓ 图标已生成：');
+  for (const f of [OUT_PNG, OUT_ICNS, OUT_ICO]) {
+    if (fs.existsSync(f)) console.log('  ' + path.relative(ROOT, f) + ' (' + fs.statSync(f).size + ' bytes)');
   }
-  const idat = zlib.deflateSync(raw, { level: 9 });
-  return Buffer.concat([sig, chunk('IHDR', ihdr), chunk('IDAT', idat), chunk('IEND', Buffer.alloc(0))]);
+} finally {
+  try { fs.unlinkSync(tmpPy); } catch (e) {}
 }
-
-// ---------- 几何 ----------
-function roundedRectSDF(x, y, halfW, halfH, r) {
-  const qx = Math.abs(x) - (halfW - r);
-  const qy = Math.abs(y) - (halfH - r);
-  const ax = Math.max(qx, 0);
-  const ay = Math.max(qy, 0);
-  return Math.hypot(ax, ay) + Math.min(Math.max(qx, qy), 0) - r;
-}
-
-function edge(px, py, ax, ay, bx, by) {
-  return (px - bx) * (ay - by) - (ax - bx) * (py - by);
-}
-
-function inTriangle(px, py, a, b, c) {
-  const d1 = edge(px, py, a[0], a[1], b[0], b[1]);
-  const d2 = edge(px, py, b[0], b[1], c[0], c[1]);
-  const d3 = edge(px, py, c[0], c[1], a[0], a[1]);
-  const neg = d1 < 0 || d2 < 0 || d3 < 0;
-  const pos = d1 > 0 || d2 > 0 || d3 > 0;
-  return !(neg && pos);
-}
-
-// ---------- 绘制 ----------
-const TOP = [0x4F, 0x7C, 0xFF];   // #4F7CFF
-const BOT = [0x8B, 0x5C, 0xF6];   // #8B5CF6
-
-function render() {
-  const rgba = Buffer.alloc(SIZE * SIZE * 4);
-  const half = SIZE / 2;
-  const rectHalf = SIZE * 0.455;
-  const radius = SIZE * 0.225;
-
-  // 播放三角形（尖端朝右 = 标准播放符号，视觉重心居中）
-  const t = SIZE * 0.30;
-  const triEdgeX = half - SIZE * 0.115;
-  const triA = [triEdgeX, half - t * 0.78];
-  const triB = [triEdgeX, half + t * 0.78];
-  const triC = [triEdgeX + t * 1.18, half];
-
-  const SS = 3; // 每像素 3x3 超采样抗锯齿
-  const step = 1 / SS;
-
-  for (let py = 0; py < SIZE; py++) {
-    for (let px = 0; px < SIZE; px++) {
-      let rSum = 0, gSum = 0, bSum = 0, aSum = 0;
-      for (let sy = 0; sy < SS; sy++) {
-        for (let sx = 0; sx < SS; sx++) {
-          const x = px + (sx + 0.5) * step - half;
-          const y = py + (sy + 0.5) * step - half;
-
-          const d = roundedRectSDF(x, y, rectHalf, rectHalf, radius);
-          if (d > 0.6) continue; // 圆角外
-
-          // 垂直渐变 + 轻微径向高光
-          const k = Math.min(1, Math.max(0, (py / SIZE) * 0.85 + 0.15));
-          let r = TOP[0] + (BOT[0] - TOP[0]) * k;
-          let g = TOP[1] + (BOT[1] - TOP[1]) * k;
-          let b = TOP[2] + (BOT[2] - TOP[2]) * k;
-          const hl = Math.max(0, 1 - Math.hypot(x + SIZE * 0.16, y + SIZE * 0.2) / (SIZE * 0.72));
-          const boost = hl * hl * 46;
-          r = Math.min(255, r + boost);
-          g = Math.min(255, g + boost);
-          b = Math.min(255, b + boost);
-
-          // 白色播放三角
-          if (inTriangle(px + (sx + 0.5) * step, py + (sy + 0.5) * step, triA, triB, triC)) {
-            r = 255; g = 255; b = 255;
-          }
-
-          rSum += r; gSum += g; bSum += b; aSum += 255;
-        }
-      }
-      const n = SS * SS;
-      const off = (py * SIZE + px) * 4;
-      const alpha = aSum / n;
-      if (alpha === 0) { rgba[off + 3] = 0; continue; }
-      const cov = aSum / 255 / n;
-      rgba[off] = Math.round(rSum / (n * cov));
-      rgba[off + 1] = Math.round(gSum / (n * cov));
-      rgba[off + 2] = Math.round(bSum / (n * cov));
-      rgba[off + 3] = Math.round(alpha);
-    }
-  }
-  return rgba;
-}
-
-const out = path.join(__dirname, '..', 'build', 'icon.png');
-fs.mkdirSync(path.dirname(out), { recursive: true });
-fs.writeFileSync(out, encodePng(SIZE, SIZE, render()));
-console.log('已生成 ' + out + ' (' + fs.statSync(out).size + ' bytes)');

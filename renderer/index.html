@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <!-- 本地桌面程序：无远程内容，不使用 CSP，避免 file:// 下 'self' 匹配不到本地 app.js 导致脚本被拦截（用户文本已做 escape 防 XSS） -->
-  <title>MediaHub · 本地媒体工具箱</title>
+  <title>Vido — 视频抓取、格式转换、批量重命名一站式工具</title>
   <link rel="stylesheet" href="style.css" />
   <!-- 早期错误捕获：任何脚本错误（含解析错误）都显示到页面，无需 DevTools 即可排查 -->
   <script>
@@ -37,7 +37,7 @@
   <!-- 独立移除启动遮罩：无论后续主脚本是否报错，这行只要执行，遮罩就会消失 -->
   <script>var __b = document.getElementById('boot'); if (__b) __b.remove();</script>
   <header class="topbar">
-    <div class="brand">🎬 MediaHub<span class="maker">慧天科技出品</span></div>
+    <div class="brand">🎬 Vido<span class="maker">慧天科技出品</span></div>
     <nav class="tabs">
       <button class="tab active" data-tab="download">下载</button>
       <button class="tab" data-tab="library">媒体库</button>
@@ -228,7 +228,7 @@
       <div class="card">
         <h2>关于</h2>
         <div id="appVersion" class="msg"></div>
-        <p class="hint">慧天科技出品。MediaHub 桌面版 · 本地媒体工具箱。文件始终留在本机，不上传任何服务器。</p>
+        <p class="hint">慧天科技出品。Vido — 视频抓取、格式转换、批量重命名一站式工具。文件始终留在本机，不上传任何服务器。</p>
       </div>
     </section>
   </main>
@@ -237,7 +237,7 @@
   <script>
 (function () {
 'use strict';
-/* MediaHub 桌面版前端逻辑（原生 JS，通过 window.api 调用主进程） */
+/* Vido 前端逻辑（原生 JS，通过 window.api 调用主进程） */
 
 // 脚本已执行：立即移除启动遮罩（若遮罩一直显示，说明本文件未加载/被拦截）
 (function () { var b = document.getElementById('boot'); if (b) b.remove(); })();
@@ -1014,7 +1014,7 @@ async function loadAppVersion() {
     const v = await api.call('app:version', null);
     $('#appVersion').textContent = `${v.name} v${v.version}`;
   } catch (e) {
-    $('#appVersion').textContent = 'MediaHub';
+    $('#appVersion').textContent = 'Vido';
   }
 }
 
@@ -1028,10 +1028,11 @@ async function initStorage() {
 }
 
 // ---------------- 启动 ----------------
+// 注意顺序：必须先加载 videos，renderPlaylists 才能统计"已下载 X"
 (async function start() {
   await initLibFilter();
-  await refreshPlaylists();
   await refreshVideos();
+  await refreshPlaylists();
   await refreshRecords();
   await refreshRules();
   await checkBinaries();

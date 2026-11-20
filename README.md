@@ -1,8 +1,10 @@
-# MediaHub 桌面版
+# Vido
 
-> **慧天科技出品** ｜ 当前版本：v1.5.0 ｜ 更新日期：2026-11-16 ｜ 完整变更见 [CHANGELOG.md](CHANGELOG.md)
+> **慧天科技出品** ｜ 当前版本：v1.6.0 ｜ 更新日期：2026-11-20 ｜ 完整变更见 [CHANGELOG.md](CHANGELOG.md)
 
-本地运行的媒体工具箱，**Mac / Windows 安装即用，无需服务器、不上传任何文件**。
+**Vido — 视频抓取、格式转换、批量重命名一站式工具。**
+
+本地运行，**Mac / Windows 安装即用，无需服务器、不上传任何文件**。
 
 ## 这是什么
 
@@ -34,7 +36,8 @@
 
 | 版本 | 日期 | 概要 |
 |---|---|---|
-| **v1.5.0** | 2026-11-16 | 统一数据目录（安装版不再丢历史记录）；新增下载暂停/继续 |
+| **v1.6.0** | 2026-11-20 | 更名 Vido + 全新黑翼图标；修复重启后"已下载 0"与暂停关闭导致任务卡死、需重新下载；默认关闭调试模式 |
+| v1.5.0 | 2026-11-16 | 统一数据目录（安装版不再丢历史记录）；新增下载暂停/继续 |
 | v1.4.0 | 2026-11-16 | 修复音视频未合并导致的转音频失败（含自动合并补救）；智能生成改名改为清洗+重组 |
 | v1.3.0 | 2026-11-16 | 播放列表与媒体库支持删除（含批量）；文件删除强制限定在存储目录内 |
 | v1.2.0 | 2026-11-10 | 并发下载、进度条、下载即转换、VideoToolbox GPU 加速；出品方改为慧天科技 |
@@ -95,8 +98,8 @@ npm run dist:win
 
 产物在 `dist/` 目录：
 
-- macOS：`MediaHub-1.5.0-mac-x64.dmg`（111MB，可拖拽安装）/ `MediaHub-1.5.0-mac-x64.zip`（99MB）
-- Windows：`MediaHub Setup 1.5.0.exe`
+- macOS：`Vido-1.6.0-mac-x64.dmg`（可拖拽安装）/ `Vido-1.6.0-mac-x64.zip`
+- Windows：`Vido Setup 1.6.0.exe`
 
 ### macOS 打包说明（`tools/build-mac.sh`）
 
@@ -108,16 +111,15 @@ npm run dist:win
 3. `ditto` 打包 zip；
 4. `hdiutil` 制作 dmg（内含 `/Applications` 拖拽安装快捷方式）。
 
-> **图标**：仓库已内置自绘图标 `build/icon.icns`（蓝紫渐变圆角 + 白色播放三角）。
-> 想改样式：编辑 `tools/make-icon.js` 后执行 `npm run icon`，再重新打包。
-> Windows 图标 `build/icon.ico` 缺省时用 electron-builder 默认图标，不影响打包。
+> **图标**：仓库已内置 Vido 黑翼下载图标（`build/icon-source.jpg` 为源图，`build/icon.png` / `icon.icns` / `icon.ico` 为产物）。
+> 想改样式：替换源图后执行 `npm run icon`，再重新打包（需 python3 + Pillow）。
 
 ### 分发给他人时
 
 未做 Apple 公证（notarization），对方首次打开需先去掉隔离属性：
 
 ```bash
-xattr -rd com.apple.quarantine /Applications/MediaHub.app
+xattr -rd com.apple.quarantine /Applications/Vido.app
 ```
 
 ### 已知环境坑
@@ -129,7 +131,7 @@ xattr -rd com.apple.quarantine /Applications/MediaHub.app
 
 ## 四、首次使用流程
 
-1. 打开 MediaHub → 「设置」页，确认 yt-dlp / ffmpeg / ffprobe 状态；缺失则点「自动下载」（国内网络请先在「网络代理」填入代理地址；npmmirror 源可直连）。
+1. 打开 Vido → 「设置」页，确认 yt-dlp / ffmpeg / ffprobe 状态；缺失则点「自动下载」（国内网络请先在「网络代理」填入代理地址；npmmirror 源可直连）。
 2. 「下载与转码性能」按需调整**同时下载数**（默认 3，建议 3～5）与**分片并发数**（默认 4）。
 3. 「下载」页粘贴播放列表链接 → 「解析」→ 此时会询问**是否在下载时同步转换为音频**（确定 = 下载并转换，取消 = 仅下载）。
 4. 选中播放列表「下载全部」（同一链接重复解析会复用原记录，不会重复建单）；若提示「检测到 N 个条目此前已下载」，确认后即重新下载。

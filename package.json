@@ -1,7 +1,7 @@
 {
   "name": "mediahub-desktop",
-  "version": "1.5.0",
-  "description": "慧天科技出品 · 本地媒体工具箱：批量下载 YouTube/Facebook/Twitter 播放列表视频，批量改名（简繁转换/智能生成/13种规则），视频转音频。Mac/Windows 安装即用。",
+  "version": "1.6.0",
+  "description": "Vido — 视频抓取、格式转换、批量重命名一站式工具。慧天科技出品，Mac/Windows 安装即用，文件始终留在本机。",
   "main": "main/main.js",
   "author": "慧天科技",
   "company": "慧天科技",
@@ -21,7 +21,7 @@
   },
   "build": {
     "appId": "com.mediahub.desktop",
-    "productName": "MediaHub",
+    "productName": "Vido",
     "copyright": "Copyright © 2026 慧天科技",
     "directories": {
       "output": "dist",
@@ -80,7 +80,7 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "shortcutName": "MediaHub"
+      "shortcutName": "Vido"
     }
   }
 }

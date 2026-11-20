@@ -2,8 +2,7 @@
 node_modules/
 dist/
 
-# 图标中间产物（icon.icns 由 tools/make-icon.js 生成并保留）
-build/icon.png
+# 图标源文件与产物均纳入版本控制（tools/make-icon.js 从 icon-source.jpg 生成）
 
 # 系统与编辑器
 .DS_Store
