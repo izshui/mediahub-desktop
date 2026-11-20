@@ -6,6 +6,17 @@
 
 本地运行，**Mac / Windows 安装即用，无需服务器、不上传任何文件**。
 
+## 下载安装
+
+从 [GitHub Releases](https://github.com/izshui/mediahub-desktop/releases/latest) 下载安装包：
+
+| 平台 | 下载 |
+|---|---|
+| macOS Intel (x64) | [Vido-1.7.0-mac-x64.dmg](https://github.com/izshui/mediahub-desktop/releases/download/v1.7.0/Vido-1.7.0-mac-x64.dmg) |
+| macOS 免安装版 | [Vido-1.7.0-mac-x64.zip](https://github.com/izshui/mediahub-desktop/releases/download/v1.7.0/Vido-1.7.0-mac-x64.zip) |
+
+首次打开若提示「无法验证开发者」，执行：`xattr -rd com.apple.quarantine /Applications/Vido.app`
+
 ## 这是什么
 
 一个装在自己电脑上的媒体处理工具：把 YouTube / Facebook / Twitter 播放列表批量下载到本地，用 13 种规则批量改名，再转成音频格式。
