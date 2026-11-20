@@ -386,33 +386,63 @@ unifyUserDataDir();
  *  - 产物不存在或为空   → 重置为 pending（允许重新下载）
  * 这样重启后"已下载 X"计数准确，也不会出现卡死任务永远不下载的情况。
  */
+/**
+ * 判断一个文件路径是否是 yt-dlp 的分离流中间产物（而非合并后的完整文件）。
+ * 分离流命名形如：标题 [ID].f399.mp4 / 标题 [ID].f251.webm
+ * 这类文件：① 通常无音轨（纯视频流）或纯音频；② 旧版并发错位时会被误记为 downloaded。
+ * 正常合并产物是：标题 [ID].mp4 / .mkv / .webm，不带 .f<数字>. 段。
+ */
+function isFragmentPath(filepath) {
+  if (!filepath || typeof filepath !== 'string') return false;
+  const base = require('path').basename(filepath);
+  return /\.f\d+\.(mp4|webm|m4a|opus|mkv|mov|avi)$/i.test(base);
+}
+
 function recoverInterruptedTasks() {
-  let completed = 0, reset = 0;
+  let completed = 0, reset = 0, fragments = 0;
   try {
     const fsMod = require('fs');
     for (const v of store.data.videos) {
-      if (v.status !== 'downloading' && v.status !== 'converting') continue;
-      const f = v.filepath;
-      let usable = false;
-      if (f && fsMod.existsSync(f)) {
-        try { usable = fsMod.statSync(f).size > 0; } catch (e) { usable = false; }
+      // ① 卡在下载中/转换中的任务：按产物是否存在恢复
+      if (v.status === 'downloading' || v.status === 'converting') {
+        const f = v.filepath;
+        let usable = false;
+        if (f && fsMod.existsSync(f)) {
+          try { usable = fsMod.statSync(f).size > 0; } catch (e) { usable = false; }
+        }
+        if (usable) {
+          v.status = 'downloaded';
+          delete v.error_message;
+          completed++;
+        } else {
+          v.status = 'pending';
+          delete v.error_message;
+          reset++;
+        }
+        continue;
       }
-      if (usable) {
-        v.status = 'downloaded';
-        delete v.error_message;
-        completed++;
-      } else {
-        v.status = 'pending';
-        delete v.error_message;
-        reset++;
+
+      // ② 伪完成记录：标着 downloaded/converted，但产物是分离流碎片（旧版并发错位的残留）。
+      //    这类记录会误导「继续下载」跳过、转音频时报无音轨，必须重置为 pending 补下。
+      //    注：普通"文件丢失"不在此处理——converted 记录的源视频被清理属正常（音频产物在 audio_path）。
+      if (v.status === 'downloaded' || v.status === 'converted') {
+        if (isFragmentPath(v.filepath)) {
+          v.status = 'pending';
+          delete v.filepath;
+          delete v.original_name;
+          delete v.current_name;
+          delete v.audio_path;
+          delete v.error_message;
+          fragments++;
+        }
       }
     }
-    if (completed || reset) store.flush();
-    if (completed || reset) {
-      console.log(`[Vido] 启动回收：${completed} 个任务恢复为已完成，${reset} 个重置为待下载`);
+    if (completed || reset || fragments) store.flush();
+    if (completed || reset || fragments) {
+      console.log(`[Vido] 启动回收：${completed} 个恢复已完成，${reset} 个重置待下载，${fragments} 个伪完成/丢失记录重置待下载`);
     }
   } catch (e) { /* 回收失败不阻断启动 */ }
-  return { completed, reset };
+  return { completed, reset, fragments };
 }
 
 function bootstrap() {

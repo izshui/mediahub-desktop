@@ -1,6 +1,6 @@
 {
   "name": "mediahub-desktop",
-  "version": "1.8.0",
+  "version": "1.8.1",
   "description": "Vido — 视频抓取、格式转换、批量重命名一站式工具。慧天科技出品，Mac/Windows 安装即用，文件始终留在本机。",
   "main": "main/main.js",
   "author": "慧天科技",
