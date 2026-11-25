@@ -329,7 +329,12 @@ function registerIpc() {
   ipcMain.handle('app:version', () => ({ name: app.getName(), version: app.getVersion() }));
 
   ipcMain.handle('rename:preview', (_, args) => preview(store, args.videoIds, args.ruleIds, args.useCurrentName));
-  ipcMain.handle('rename:execute', (_, args) => execute(store, args.videoIds, args.ruleIds, args.useCurrentName));
+  ipcMain.handle('rename:execute', async (_, args) => {
+    const r = await execute(store, args.videoIds, args.ruleIds, args.useCurrentName);
+    // 改名含下载记录路径同步，立即落盘，避免防抖窗口内退出丢失
+    if (typeof store.flush === 'function') store.flush();
+    return r;
+  });
   ipcMain.handle('rename:rules', () => ({ schema: RenameEngine.schema(), rules: store.listRules(false) }));
   ipcMain.handle('rename:rule:save', (_, rule) => store.saveRule(rule));
   ipcMain.handle('rename:rule:delete', (_, id) => store.deleteRule(id));
@@ -440,6 +445,30 @@ function recoverInterruptedTasks() {
     if (completed || reset || fragments) store.flush();
     if (completed || reset || fragments) {
       console.log(`[Vido] 启动回收：${completed} 个恢复已完成，${reset} 个重置待下载，${fragments} 个伪完成/丢失记录重置待下载`);
+    }
+
+    // ③ 存量失效下载记录自动修复：
+    //    历史改名/并发错位后，部分下载记录 filepath 指向旧文件名或分离流碎片（已不存在）。
+    //    - 若关联视频记录有有效新路径 → 同步过来（改名场景）；
+    //    - 否则（视频未真正下载 / 指向脏碎片）→ 打 file_missing 标记，避免界面误导。
+    let fixed = 0, marked = 0;
+    const videoById = new Map(store.data.videos.map((v) => [v.id, v]));
+    for (const d of store.data.downloads) {
+      if (d.filepath && fsMod.existsSync(d.filepath)) continue; // 路径有效，跳过
+      const v = d.video_id !== undefined ? videoById.get(d.video_id) : null;
+      if (v && v.filepath && fsMod.existsSync(v.filepath)) {
+        d.filepath = v.filepath;
+        d.filename = require('path').basename(v.filepath);
+        d.file_missing = false;
+        fixed++;
+      } else if (!d.file_missing) {
+        d.file_missing = true; // 记录保留为历史，但标记文件已失效
+        marked++;
+      }
+    }
+    if (fixed || marked) {
+      store.flush();
+      console.log(`[Vido] 启动修复：${fixed} 条下载记录同步新路径，${marked} 条标记为文件已失效`);
     }
   } catch (e) { /* 回收失败不阻断启动 */ }
   return { completed, reset, fragments };

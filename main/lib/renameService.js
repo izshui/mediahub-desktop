@@ -144,6 +144,10 @@ function execute(store, videoIds, ruleIds, useCurrentName) {
       current_name: newName,
       ext: path.extname(newName).replace('.', '').toLowerCase(),
     });
+    // 同步更新下载记录的文件路径：视频改名后，对应下载记录也要指向新路径，否则"文件已删除"
+    if (typeof store.updateDownloadPathsByVideo === 'function') {
+      store.updateDownloadPathsByVideo(vid, newPath);
+    }
     store.addHistory({ video_id: vid, old_name: oldName, new_name: newName, rule_ids: ruleIdsStr });
     renamed++;
     details.push({ id: vid, status: 'renamed', from: oldName, to: newName });

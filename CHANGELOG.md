@@ -5,6 +5,20 @@
 
 ---
 
+## [1.8.2] - 2026-11-25
+
+### 修复
+
+- **改名后下载记录文件路径失效**
+  - 根因：改名 `execute` 重命名磁盘文件后只更新了视频记录的 `filepath`，从不更新对应的下载记录，
+    导致大量下载记录仍指向旧文件名 → 下载记录页显示"文件已删除"、`findDownloadByPath` 匹配不上。
+  - 实测：本地 121 条下载记录中 72 条因改名指向失效路径。
+  - 修复：`db.js` 新增 `updateDownloadPathsByVideo(videoId, newPath)`（同步 filepath/filename、清除 file_missing 标记）；
+    `renameService.execute` 改名成功后立即调用；`rename:execute` IPC 末尾强制 `store.flush()` 避免 200ms 防抖窗口内退出丢数据。
+  - `db_only` 分支（文件本就不在磁盘）保持"文件已删除"标记不变，语义正确。
+
+---
+
 ## [1.8.1] - 2026-11-20
 
 ### 修复

@@ -198,6 +198,21 @@ class Store {
     return true;
   }
 
+  /** 改名后同步更新某视频对应的下载记录文件路径（避免路径失效） */
+  updateDownloadPathsByVideo(videoId, newFilepath) {
+    let n = 0;
+    for (const d of this.data.downloads) {
+      if (d.video_id === videoId && d.filepath && d.filepath !== newFilepath) {
+        d.filepath = newFilepath;
+        d.filename = require('path').basename(newFilepath);
+        d.file_missing = false;
+        n++;
+      }
+    }
+    if (n > 0) this.save();
+    return n;
+  }
+
   /** 标记下载记录中对应文件已被删除（记录保留为历史，仅打标记） */
   markDownloadsMissing(paths) {
     const set = new Set(paths || []);

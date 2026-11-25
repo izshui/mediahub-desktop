@@ -1,6 +1,6 @@
 # Vido
 
-> **慧天科技出品** ｜ 当前版本：v1.8.1 ｜ 更新日期：2026-11-20 ｜ 完整变更见 [CHANGELOG.md](CHANGELOG.md)
+> **慧天科技出品** ｜ 当前版本：v1.8.2 ｜ 更新日期：2026-11-25 ｜ 完整变更见 [CHANGELOG.md](CHANGELOG.md)
 
 **Vido — 视频抓取、格式转换、批量重命名一站式工具。**
 
@@ -12,8 +12,8 @@
 
 | 平台 | 下载 |
 |---|---|
-| macOS Intel (x64) | [Vido-1.8.1-mac-x64.dmg](https://github.com/izshui/mediahub-desktop/releases/download/v1.8.1/Vido-1.8.1-mac-x64.dmg) |
-| macOS 免安装版 | [Vido-1.8.1-mac-x64.zip](https://github.com/izshui/mediahub-desktop/releases/download/v1.8.1/Vido-1.8.1-mac-x64.zip) |
+| macOS Intel (x64) | [Vido-1.8.2-mac-x64.dmg](https://github.com/izshui/mediahub-desktop/releases/download/v1.8.2/Vido-1.8.2-mac-x64.dmg) |
+| macOS 免安装版 | [Vido-1.8.2-mac-x64.zip](https://github.com/izshui/mediahub-desktop/releases/download/v1.8.2/Vido-1.8.2-mac-x64.zip) |
 
 首次打开若提示「无法验证开发者」，执行：`xattr -rd com.apple.quarantine /Applications/Vido.app`
 
@@ -47,6 +47,7 @@
 
 | 版本 | 日期 | 概要 |
 |---|---|---|
+| **v1.8.2** | 2026-11-25 | 改名后同步下载记录文件路径（修复"改名后下载记录显示文件已删除/路径失效"）；改名强制落盘防抖 |
 | **v1.8.1** | 2026-11-20 | 启动自动回收旧版"伪完成"分离流记录（如 `.f399.mp4`），重置为待下载供「继续下载」补下；修复视频无音轨 |
 | **v1.8.0** | 2026-11-20 | 修复下载 403：把设置的代理传给 yt-dlp（解析/下载/探测全链路）；修复 `--print-to-file` 参数格式错误导致的误判失败；403 错误给出可操作提示 |
 | **v1.7.0** | 2026-11-20 | 播放列表新增「继续下载」（只补未完成、跳过已下载、不弹重复确认） |
@@ -112,8 +113,8 @@ npm run dist:win
 
 产物在 `dist/` 目录：
 
-- macOS：`Vido-1.8.1-mac-x64.dmg`（可拖拽安装）/ `Vido-1.8.1-mac-x64.zip`
-- Windows：`Vido Setup 1.8.1.exe`
+- macOS：`Vido-1.8.2-mac-x64.dmg`（可拖拽安装）/ `Vido-1.8.2-mac-x64.zip`
+- Windows：`Vido Setup 1.8.2.exe`
 
 ### macOS 打包说明（`tools/build-mac.sh`）
 
